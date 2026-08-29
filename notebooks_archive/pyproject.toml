@@ -1,26 +1,26 @@
 [project]
-name = "synthetic-patient-data-retrival"
+name = "langchain-intro"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 authors = [
-    { name = "Allam235", email = "106848509+Allam235@users.noreply.github.com" }
+    { name = "Allam235", email = "255995767+Allam2354@users.noreply.github.com" }
 ]
 requires-python = ">=3.12"
 dependencies = [
     "chromadb>=1.5.9",
     "faiss-cpu>=1.15.0",
-    "langchain>=1.3.18",
+    "ipykernel>=7.3.0",
+    "langchain>=1.3.16",
     "langchain-community>=0.4.2",
-    "langchain-core>=1.6.1",
+    "langchain-core>=1.6.0",
     "pymupdf>=1.28.2",
-    "pypdf>=6.16.2",
+    "pypdf>=6.16.1",
     "sentence-transformers>=6.0.0",
-    "streamlit>=1.62.0",
 ]
 
 [project.scripts]
-synthetic-patient-data-retrival = "synthetic_patient_data_retrival:main"
+langchain-intro = "langchain_intro:main"
 
 [build-system]
 requires = ["uv_build>=0.12.5,<0.13.0"]
