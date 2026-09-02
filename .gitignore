@@ -176,7 +176,8 @@ cython_debug/
 
 # Data
 # Generator output is the output of the generator tool, which exceeds 1000 JSON files
-data/generator/output
+# Synthea Generator is too large - find at https://github.com/synthetichealth/synthea/wiki/Basic-Setup-and-Running
+data/generator
 # SQLite database is the database of the patient data, can be recreated using loadGeneratorData.py
 data/sqlite
 
