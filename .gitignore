@@ -173,6 +173,13 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
+
+# Data
+# Generator output is the output of the generator tool, which exceeds 1000 JSON files
+data/generator/output
+# SQLite database is the database of the patient data, can be recreated using loadGeneratorData.py
+data/sqlite
+
 # Cursor  
 #  Cursor is an AI-powered code editor.`.cursorignore` specifies files/directories to 
 #  exclude from AI features like autocomplete and code analysis. Recommended for sensitive data

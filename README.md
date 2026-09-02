@@ -1,5 +1,11 @@
 # Synthetic Patient Data Retrival
 
+## Run the Streamlit app
+
+```powershell
+uv run streamlit run src/synthetic_patient_data_retrival/app.py
+```
+
 ## 📁 Project Branches
 
 This repository contains different versions of the project tailored for specific use cases. Switch branches depending on what you want to run:
@@ -9,18 +15,5 @@ This repository contains different versions of the project tailored for specific
 
 
 
-### Basic RAG Retrieval Pipeline
-Introduction to RAG using LangChain
-
-- Document Loader
-    - Loads PDFs and other modals into Langchain Documents
-- Chunking
-    - Recursive Text Chunking by chunk size, and overlap some amount of text between chunks
-- Embedding Manager
-    - Uses SentanceTransformer with a HuggingFace model to generate embeddings
-- VectorStore
-    - Creates a Chroma DB Vector Store Collection
-    - Adds the metadata stored in the chunked documents, and the embeddings
-- Rag Retrieval
-    - Embeds Query as a vector, runs cosine similarity, and returns the top_k chunks from Chroma DB
-        - Minimum cosine similarity
+### Introduction to RAG using LangChain Notebook 
+Document Loader -> Chunking -> Embedding Manager -> VectorStore -> RAG Retrieval
