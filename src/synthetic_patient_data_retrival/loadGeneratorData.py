@@ -67,6 +67,13 @@ def empty_patient_data():
     }
 
 
+def append_row(table_rows, parsed_row):
+    headers, row = parsed_row
+    if len(table_rows) == 0:
+        table_rows.append(headers)
+    table_rows.append(row)
+
+
 def parse_patient(resource, source_file):
     names = resource.get("name", [])
     if len(names) == 0:
@@ -77,14 +84,16 @@ def parse_patient(resource, source_file):
     given_names = name.get("given", [])
     first_name = " ".join(given_names)
 
-    return {
-        "id": resource["id"],
-        "first_name": first_name,
-        "last_name": name.get("family"),
-        "birth_date": resource.get("birthDate"),
-        "gender": resource.get("gender"),
-        "source_file": source_file,
-    }
+    headers = ("id", "first_name", "last_name", "birth_date", "gender", "source_file")
+    row = (
+        resource["id"],
+        first_name,
+        name.get("family"),
+        resource.get("birthDate"),
+        resource.get("gender"),
+        source_file,
+    )
+    return headers, row
 
 
 def parse_encounter(resource, source_file):
@@ -104,14 +113,16 @@ def parse_encounter(resource, source_file):
     subject = resource.get("subject", {})
     patient_id = get_reference_id(subject.get("reference"))
 
-    return {
-        "encounter_id": resource["id"],
-        "patient_id": patient_id,
-        "encounter_date": encounter_date,
-        "encounter_type": encounter_type,
-        "reason": reason,
-        "source_file": source_file,
-    }
+    headers = ("encounter_id", "patient_id", "encounter_date", "encounter_type", "reason", "source_file")
+    row = (
+        resource["id"],
+        patient_id,
+        encounter_date,
+        encounter_type,
+        reason,
+        source_file,
+    )
+    return headers, row
 
 
 def parse_condition(resource, source_file):
@@ -128,15 +139,17 @@ def parse_condition(resource, source_file):
         onset_period = resource.get("onsetPeriod", {})
         onset_date = onset_period.get("start")
 
-    return {
-        "id": resource["id"],
-        "patient_id": patient_id,
-        "encounter_id": encounter_id,
-        "code": code,
-        "description": description,
-        "onset_date": onset_date,
-        "source_file": source_file,
-    }
+    headers = ("id", "patient_id", "encounter_id", "code", "description", "onset_date", "source_file")
+    row = (
+        resource["id"],
+        patient_id,
+        encounter_id,
+        code,
+        description,
+        onset_date,
+        source_file,
+    )
+    return headers, row
 
 
 def parse_observation(resource, source_file):
@@ -158,17 +171,29 @@ def parse_observation(resource, source_file):
     if value is not None:
         value_text = str(value)
 
-    return {
-        "id": resource["id"],
-        "patient_id": patient_id,
-        "encounter_id": encounter_id,
-        "observation_date": observation_date,
-        "code": code,
-        "description": description,
-        "value": value_text,
-        "unit": unit,
-        "source_file": source_file,
-    }
+    headers = (
+        "id",
+        "patient_id",
+        "encounter_id",
+        "observation_date",
+        "code",
+        "description",
+        "value",
+        "unit",
+        "source_file",
+    )
+    row = (
+        resource["id"],
+        patient_id,
+        encounter_id,
+        observation_date,
+        code,
+        description,
+        value_text,
+        unit,
+        source_file,
+    )
+    return headers, row
 
 
 def parse_medication(resource, source_file):
@@ -184,15 +209,17 @@ def parse_medication(resource, source_file):
     validity_period = dispense_request.get("validityPeriod", {})
     end_date = validity_period.get("end")
 
-    return {
-        "id": resource["id"],
-        "patient_id": patient_id,
-        "encounter_id": encounter_id,
-        "description": description,
-        "start_date": resource.get("authoredOn"),
-        "end_date": end_date,
-        "source_file": source_file,
-    }
+    headers = ("id", "patient_id", "encounter_id", "description", "start_date", "end_date", "source_file")
+    row = (
+        resource["id"],
+        patient_id,
+        encounter_id,
+        description,
+        resource.get("authoredOn"),
+        end_date,
+        source_file,
+    )
+    return headers, row
 
 
 def parse_procedure(resource, source_file):
@@ -209,37 +236,18 @@ def parse_procedure(resource, source_file):
         performed_period = resource.get("performedPeriod", {})
         procedure_date = performed_period.get("start")
 
-    return {
-        "id": resource["id"],
-        "patient_id": patient_id,
-        "encounter_id": encounter_id,
-        "description": description,
-        "procedure_date": procedure_date,
-        "source_file": source_file,
-    }
+    headers = ("id", "patient_id", "encounter_id", "description", "procedure_date", "source_file")
+    row = (
+        resource["id"],
+        patient_id,
+        encounter_id,
+        description,
+        procedure_date,
+        source_file,
+    )
+    return headers, row
 
 
-def bundle_to_dict(bundle, source_file):
-    data = empty_patient_data()
-
-    for entry in bundle.get("entry", []):
-        resource = entry.get("resource", {})
-        resource_type = resource.get("resourceType")
-
-        if resource_type == "Patient":
-            data["patients"].append(parse_patient(resource, source_file))
-        elif resource_type == "Encounter":
-            data["encounters"].append(parse_encounter(resource, source_file))
-        elif resource_type == "Condition":
-            data["conditions"].append(parse_condition(resource, source_file))
-        elif resource_type == "Observation":
-            data["observations"].append(parse_observation(resource, source_file))
-        elif resource_type == "MedicationRequest":
-            data["medications"].append(parse_medication(resource, source_file))
-        elif resource_type == "Procedure":
-            data["procedures"].append(parse_procedure(resource, source_file))
-
-    return data
 
 
 def read_generator_output(output_path=None, patients=10):
@@ -257,18 +265,53 @@ def read_generator_output(output_path=None, patients=10):
 
 
 def merge_patient_data(all_data, patient_data):
+    """
+    
+    """
     for key in all_data:
-        all_data[key].extend(patient_data[key])
+        rows = patient_data[key]
+        if len(rows) == 0:
+            continue
+        if len(all_data[key]) == 0:
+            all_data[key].extend(rows)
+        else:
+            all_data[key].extend(rows[1:])
 
+def bundle_to_dict(bundle, source_file):
+    """
+    Converts a FHIR Bundle into a dictionary containing the row data for each resource type
+    Args:
+        bundle: FHIR Bundle
+        source_file: Source file name
+    Returns:
+        data: Dictionary containing the row data for each resource type
+    """
+    data = empty_patient_data()
+
+    for entry in bundle.get("entry", []):
+        resource = entry.get("resource", {})
+        resource_type = resource.get("resourceType")
+
+        if resource_type == "Patient":
+            append_row(data["patients"], parse_patient(resource, source_file))
+        elif resource_type == "Encounter":
+            append_row(data["encounters"], parse_encounter(resource, source_file))
+        elif resource_type == "Condition":
+            append_row(data["conditions"], parse_condition(resource, source_file))
+        elif resource_type == "Observation":
+            append_row(data["observations"], parse_observation(resource, source_file))
+        elif resource_type == "MedicationRequest":
+            append_row(data["medications"], parse_medication(resource, source_file))
+        elif resource_type == "Procedure":
+            append_row(data["procedures"], parse_procedure(resource, source_file))
+
+    return data
 
 def process_generator_output(patientsCount=10):
-    all_data = empty_patient_data()
     patient_files = read_generator_output(patients=patientsCount)
 
     for bundle, source_file in patient_files:
-        patient_data = bundle_to_dict(bundle, source_file)
-        merge_patient_data(all_data, patient_data)
-
+        all_data = bundle_to_dict(bundle, source_file)
     return all_data
 
 
@@ -285,7 +328,7 @@ def create_tables(cursor):
         DROP TABLE IF EXISTS rag_audit;
         
         CREATE TABLE patients (
-            id TEXT PRIMARY KEY,
+            patient_id TEXT PRIMARY KEY,
             first_name TEXT,
             last_name TEXT,
             birth_date TEXT,
@@ -318,7 +361,7 @@ def create_tables(cursor):
         );
 
         CREATE TABLE observations (
-            id TEXT PRIMARY KEY,
+            observation_id TEXT PRIMARY KEY,
             patient_id TEXT NOT NULL,
             encounter_id TEXT,
             observation_date TEXT,
@@ -379,7 +422,70 @@ def create_tables(cursor):
         
         """
     )
-def intializeDatabase(patients=0):
+
+
+def load_patients_data(cursor, patients):
+    sql_statement = """
+        INSERT INTO patients 
+            (patient_id, first_name, last_name, birth_date, gender, source_file) 
+        VALUES (?, ?, ?, ?, ?, ?)
+    """
+    cursor.executemany(sql_statement, patients[1:])
+
+def load_encounters_data(cursor, encounters):
+    sql_statement = """
+        INSERT INTO encounters 
+            (encounter_id, patient_id, encounter_date, encounter_type, reason, source_file) 
+        VALUES (?, ?, ?, ?, ?, ?)
+    """
+    cursor.executemany(sql_statement, encounters[1:])
+
+    
+def load_medications_data(cursor, medications):
+    sql_statement = """
+        INSERT INTO medications 
+            (id, patient_id, encounter_id, description, start_date, end_date, source_file) 
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """
+    cursor.executemany(sql_statement, medications[1:])
+
+
+def load_conditions_data(cursor, conditions):
+    sql_statement = """
+        INSERT INTO conditions 
+            (id, patient_id, encounter_id, code, description, onset_date, source_file) 
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """
+    cursor.executemany(sql_statement, conditions[1:])
+
+def load_observations_data(cursor, observations):
+    sql_statement = """
+        INSERT INTO observations 
+            (observation_id, patient_id, encounter_id, observation_date, code, description, value, unit, source_file) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """
+    cursor.executemany(sql_statement, observations[1:])
+
+def load_procedures_data(cursor, procedures):
+    sql_statement = """
+        INSERT INTO procedures 
+            (procedure_id, patient_id, encounter_id, description, procedure_date, source_file) 
+        VALUES (?, ?, ?, ?, ?, ?)
+    """
+    cursor.executemany(sql_statement, procedures[1:])
+
+def load_patient_data(patient_data):
+    with sqlite3.connect(DB_PATH) as conn:
+        cursor = conn.cursor()
+        load_patients_data(cursor, patient_data["patients"])
+        load_medications_data(cursor, patient_data["medications"])
+        load_encounters_data(cursor, patient_data["encounters"])
+        load_conditions_data(cursor, patient_data["conditions"])
+        load_observations_data(cursor, patient_data["observations"])
+        load_procedures_data(cursor, patient_data["procedures"])
+        conn.commit()
+
+def intialize_database():
     """
         patients: number of patients from generator wanted
     """
@@ -391,6 +497,6 @@ def intializeDatabase(patients=0):
 
         conn.commit()
 
-data = process_generator_output(patientsCount=1)['encounters'][0]
-with open("output.json", "w") as file:
-    json.dump(data, file, indent=4)
+intialize_database()
+data = process_generator_output(patientsCount=1)
+load_patient_data(data)
