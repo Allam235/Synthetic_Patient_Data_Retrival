@@ -1,4 +1,6 @@
 import streamlit as st
+from synthetic_patient_data_retrival.loadGeneratorData import PatientDatabaseManager
+
 
 
 st.set_page_config(
