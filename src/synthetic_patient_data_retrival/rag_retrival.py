@@ -8,45 +8,172 @@ import chromadb
 import numpy as np
 from chromadb.config import Settings
 
-from langchain_community.document_loaders import PyPDFLoader, PyMuPDFLoader
+from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from sentence_transformers import SentenceTransformer
 
 from sklearn.metrics.pairwise import cosine_similarity
 
-
+from synthetic_patient_data_retrival.loadGeneratorData import PatientDatabaseManager
 ### Read all PDFS in library
 
-def process_all_pdfs(pdf_directory):
-    """Process all PDF files in a directory"""
-    all_documents = []
-    pdf_dir = Path(pdf_directory)
-    
-    # Find all PDF files recursively
-    pdf_files = list(pdf_dir.glob("**/*.pdf"))
-    
-    print(f"Found {len(pdf_files)} PDF files to process")
-    
-    for pdf_file in pdf_files:
-        print(f"\nProcessing: {pdf_file.name}")
+
+
+
+def encounters_to_documents(encounters):
+    all_encounters = []
+    print(f"Processing {len(encounters)} encounters")
+    for encounter in encounters:
         try:
-            loader = PyPDFLoader(str(pdf_file))
-            documents = loader.load()
-            
-            # Add source information to metadata
-            for doc in documents:
-                doc.metadata['source_file'] = pdf_file.name
-                doc.metadata['file_type'] = 'pdf'
-            
-            all_documents.extend(documents)
-            print(f"  ✓ Loaded {len(documents)} pages")
-            
+            doc = Document(
+                page_content=f"{encounter['encounter_type']} | {encounter['reason']}",
+                metadata={
+                    'doc_id': encounter['encounter_id'],
+                    'doc_type': 'encounter',
+                    'patient_id': encounter['patient_id'],
+                    'encounter_id': encounter['encounter_id'],
+                    'encounter_date': encounter['encounter_date'],
+                    'encounter_type': encounter['encounter_type'],
+                    'reason': encounter['reason'],
+                    'source_file': encounter['source_file'],
+                }
+            )
+            all_encounters.append(doc)
         except Exception as e:
-            print(f"  ✗ Error: {e}")
-    
-    print(f"\nTotal documents loaded: {len(all_documents)}")
-    return all_documents
+            print(f"Error processing encounter: {e}")
+    print(f"Processed {len(all_encounters)} encounters")
+    return all_encounters
+
+
+def patients_to_documents(patients):
+    all_patients = []
+    print(f"Processing {len(patients)} patients")
+    for patient in patients:
+        try:
+            doc = Document(
+                page_content=f"{patient['first_name']} | {patient['last_name']} | {patient['gender']} | {patient['birth_date']}",
+                metadata={
+                    'doc_id': patient['patient_id'],
+                    'doc_type': 'patient',
+                    'patient_id': patient['patient_id'],
+                    'first_name': patient['first_name'],
+                    'last_name': patient['last_name'],
+                    'birth_date': patient['birth_date'],
+                    'gender': patient['gender'],
+                    'source_file': patient['source_file'],
+                }
+            )
+            all_patients.append(doc)
+        except Exception as e:
+            print(f"Error processing patient: {e}")
+    print(f"Processed {len(all_patients)} patients")
+    return all_patients
+
+
+def conditions_to_documents(conditions):
+    all_conditions = []
+    print(f"Processing {len(conditions)} conditions")
+    for condition in conditions:
+        try:
+            doc = Document(
+                page_content=f"{condition['description']}",
+                metadata={
+                    'doc_id': condition['condition_id'],
+                    'doc_type': 'condition',
+                    'patient_id': condition['patient_id'],
+                    'encounter_id': condition['encounter_id'],
+                    'condition_id': condition['condition_id'],
+                    'code': condition['code'],
+                    'description': condition['description'],
+                    'onset_date': condition['onset_date'],
+                    'source_file': condition['source_file']
+                }
+            )
+            all_conditions.append(doc)
+        except Exception as e:
+            print(f"Error processing condition: {e}")
+    print(f"Processed {len(all_conditions)} conditions")
+    return all_conditions
+
+
+def observations_to_documents(observations):
+    all_observations = []
+    print(f"Processing {len(observations)} observations")
+    for observation in observations:
+        try:
+            doc = Document(
+                page_content=f"{observation['description']}: {observation['value']} {observation['unit']}",
+                metadata={
+                    'doc_id': observation['observation_id'],
+                    'doc_type': 'observation',
+                    'patient_id': observation['patient_id'],
+                    'encounter_id': observation['encounter_id'],
+                    'observation_id': observation['observation_id'],
+                    'observation_date': observation['observation_date'],
+                    'code': observation['code'],
+                    'description': observation['description'],
+                    'value': observation['value'],
+                    'unit': observation['unit'],
+                    'source_file': observation['source_file']
+                }
+            )
+            all_observations.append(doc)
+        except Exception as e:
+            print(f"Error processing observation: {e}")
+    print(f"Processed {len(all_observations)} observations")
+    return all_observations
+
+
+def medications_to_documents(medications):
+    all_medications = []
+    print(f"Processing {len(medications)} medications")
+    for medication in medications:
+        try:
+            doc = Document(
+                page_content=f"{medication['description']} | {medication['start_date']} | {medication['end_date']}",
+                metadata={
+                    'doc_id': medication['medication_id'],
+                    'doc_type': 'medication',
+                    'patient_id': medication['patient_id'],
+                    'encounter_id': medication['encounter_id'],
+                    'medication_id': medication['medication_id'],
+                    'description': medication['description'],
+                    'start_date': medication['start_date'],
+                    'end_date': medication['end_date'],
+                    'source_file': medication['source_file']
+                }
+            )
+            all_medications.append(doc)
+        except Exception as e:
+            print(f"Error processing medication: {e}")
+    print(f"Processed {len(all_medications)} medications")
+    return all_medications
+
+
+def procedures_to_documents(procedures):
+    all_procedures = []
+    print(f"Processing {len(procedures)} procedures")
+    for procedure in procedures:
+        try:
+            doc = Document(
+                page_content=f"{procedure['description']}",
+                metadata={
+                    'doc_id': procedure['procedure_id'],
+                    'doc_type': 'procedure',
+                    'patient_id': procedure['patient_id'],
+                    'encounter_id': procedure['encounter_id'],
+                    'procedure_id': procedure['procedure_id'],
+                    'description': procedure['description'],
+                    'procedure_date': procedure['procedure_date'],
+                    'source_file': procedure['source_file']
+                }
+            )
+            all_procedures.append(doc)
+        except Exception as e:
+            print(f"Error processing procedure: {e}")
+    print(f"Processed {len(all_procedures)} procedures")
+    return all_procedures
 
 
 ### Text splitting into chunks
@@ -123,7 +250,6 @@ class EmbeddingManager:
         except Exception as e:
             print(f"Error generating embeddings: {e}")
             raise
-
 
 ### VectorStore
 
@@ -289,10 +415,34 @@ class RAGRetriever:
             print(f"Error during retrieval: {e}")
             return []
 
+@staticmethod
+def process_all_documents(dbManager):
+    patient_documents = patients_to_documents(dbManager.get_patient_data())
+    encounter_documents = encounters_to_documents(dbManager.get_encounter_data())
+    condition_documents = conditions_to_documents(dbManager.get_condition_data())
+    observation_documents = observations_to_documents(dbManager.get_observation_data())
+    medication_documents = medications_to_documents(dbManager.get_medication_data())
+    procedure_documents = procedures_to_documents(dbManager.get_procedure_data())
+    return patient_documents + encounter_documents + condition_documents + observation_documents + medication_documents + procedure_documents
 
-# Process all PDFs in the data directory
+
+dbManager = PatientDatabaseManager()
+
+
+all_documents = process_all_documents(dbManager)
+
+
+print(f"Total documents: {len(all_documents)}")
+
+for doc in all_documents:
+    if len(doc.page_content) <29:
+        print(doc.page_content)
+
+"""
+embedding_manager = EmbeddingManager()
+embeddings = embedding_manager.generate_embeddings(encounters)
+
 all_pdf_documents = process_all_pdfs("../data")
-
 chunks = split_documents(documents=all_pdf_documents)
 
 ### Intialize Embedding Manager
@@ -312,3 +462,4 @@ vectorstore.add_documents(chunks, embeddings)
 rag_retriever = RAGRetriever(vectorstore, embedding_manager)
 
 rag_retriever.retrieve('Work Experience as a Medpace Data Engineer')
+"""

@@ -2,10 +2,6 @@ import sqlite3
 import json
 from pathlib import Path
 
-from pydantic_core.core_schema import NoneSchema
-
-# Moves up 2 levels to project folder
-
 
 class PatientDatabaseManager:
     """
@@ -20,13 +16,16 @@ class PatientDatabaseManager:
         self.gen_output_path = gen_output_path
         self.db_path = db_path
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.conn = sqlite3.connect(self.db_path)
+        self.conn.row_factory = sqlite3.Row
+        self.cursor = self.conn.cursor()
+
+    def close(self):
+        self.conn.close()
 
     def intialize_database(self):
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            self.create_tables(cursor)
-            conn.commit()
-
+        self.create_tables(self.cursor)
+        self.conn.commit()
     @staticmethod
     def _get_code_and_description(codeable):
         code = None
@@ -268,17 +267,21 @@ class PatientDatabaseManager:
         )
         return headers, row
 
-    def _read_generator_output(self, patientsCount:int=None, files:list[Path]=None):
+    def _read_generator_output(self, patientsCount:int=None, files:list[str]=None):
         patient_files = []
 
-        for file_path in files or list(self.gen_output_path.glob("*.json")):
+        if files is not None:
+            file_paths = [Path(self.gen_output_path / file) for file in files]
+        else:
+            file_paths = list(self.gen_output_path.glob("*.json"))
+
+        for file_path in file_paths:
             with file_path.open("r", encoding="utf-8") as file:
                 bundle = json.load(file)
             patient_files.append((bundle, file_path.name))
             if patientsCount is not None and len(patient_files) >= patientsCount:
                 break
         return patient_files
-
     @staticmethod
     def _merge_patient_data(all_data, patient_data):
         for key in all_data:
@@ -320,7 +323,7 @@ class PatientDatabaseManager:
 
         return data
 
-    def process_generator_output(self, patientsCount=None, files:list[Path]=None):
+    def process_generator_output(self, patientsCount=None, files:list[str]=None):
         patient_files = self._read_generator_output(patientsCount=patientsCount, files=files)
 
         for bundle, source_file in patient_files:
@@ -329,9 +332,9 @@ class PatientDatabaseManager:
         return all_data
 
 
-    def create_tables(self, cursor):
-        cursor.executescript(
-            """
+    @staticmethod
+    def create_tables(cursor):
+        cursor.executescript(            """
 
             DROP TABLE IF EXISTS patients;
             DROP TABLE IF EXISTS encounters;
@@ -491,20 +494,18 @@ class PatientDatabaseManager:
         """
         cursor.executemany(sql_statement, procedures[1:])
 
-    def load_patient_data(self, patient_data=None, patientsCount=None, files=None):
-        if files is not None:
-            filePaths = [Path(self.gen_output_path / file) for file in files]
+    def load_patient_data(self, patient_data=None, patientsCount=None, files:list[str]=None):
+
         if patient_data is None:
-            patient_data = self.process_generator_output(patientsCount=patientsCount, files=filePaths)
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            self._load_patients_data(cursor, patient_data["patients"])
-            self._load_medications_data(cursor, patient_data["medications"])
-            self._load_encounters_data(cursor, patient_data["encounters"])
-            self._load_conditions_data(cursor, patient_data["conditions"])
-            self._load_observations_data(cursor, patient_data["observations"])
-            self._load_procedures_data(cursor, patient_data["procedures"])
-            conn.commit()
+            patient_data = self.process_generator_output(patientsCount=patientsCount, files=files)
+
+        self._load_patients_data(self.cursor, patient_data["patients"])
+        self._load_encounters_data(self.cursor, patient_data["encounters"])
+        self._load_conditions_data(self.cursor, patient_data["conditions"])
+        self._load_observations_data(self.cursor, patient_data["observations"])
+        self._load_medications_data(self.cursor, patient_data["medications"])
+        self._load_procedures_data(self.cursor, patient_data["procedures"])
+        self.conn.commit()
 
     def check_loaded_data(self):
         """
@@ -512,29 +513,126 @@ class PatientDatabaseManager:
         Returns:
             list of rows containing the patient_id, first_name, last_name, and source_file
         """
+        self.cursor.execute(
+            "SELECT patient_id, first_name, last_name, source_file FROM patients"
+        )
+        return self.cursor.fetchall()
 
-        sql_statement = """
-            SELECT patient_id, first_name, last_name, source_file FROM patients;
-        """
-        with sqlite3.connect(self.db_path) as conn:
-            conn.row_factory = sqlite3.Row
-            cursor = conn.cursor()  
-            cursor.execute(sql_statement)
-            patients = cursor.fetchall()
-            return patients
+    def get_encounter_data(self, encounter_id=None):
+        if encounter_id is None:
+            self.cursor.execute("""
+            SELECT e.*,
+            p.first_name,
+            p.last_name
+            FROM encounters as e
+            LEFT JOIN patients as p ON e.patient_id = p.patient_id
+        """)
+        else:
+            self.cursor.execute("""
+            SELECT e.*,
+            p.first_name,
+            p.last_name
+            FROM encounters as e
+            LEFT JOIN patients as p ON e.patient_id = p.patient_id
+            WHERE e.encounter_id = ?
+            """, (encounter_id,))
+        return self.cursor.fetchall()
+    
+    def get_observation_data(self, observation_id=None):
+        if observation_id is None:
+            self.cursor.execute("""
+            SELECT o.*,
+            p.first_name,
+            p.last_name
+            FROM observations as o
+            LEFT JOIN patients as p ON o.patient_id = p.patient_id
+        """)
+        else:
+            self.cursor.execute("""
+            SELECT o.*,
+            p.first_name,
+            p.last_name,
+            p.last_name
+            FROM observations as o
+            LEFT JOIN patients as p ON o.patient_id = p.patient_id
+            WHERE o.observation_id = ?
+            """, (observation_id,))
+        return self.cursor.fetchall()
+    
+    def get_medication_data(self, medication_id=None):
+        if medication_id is None:
+            self.cursor.execute("""
+            SELECT m.*,
+            p.first_name,
+            p.last_name
+            FROM medications as m
+            LEFT JOIN patients as p ON m.patient_id = p.patient_id
+        """)
+        else:
+            self.cursor.execute("""
+            SELECT m.*,
+            p.first_name,
+            p.last_name,
+            FROM medications as m
+            LEFT JOIN patients as p ON m.patient_id = p.patient_id
+            WHERE m.medication_id = ?
+            """, (medication_id,))
+        return self.cursor.fetchall()
+    
+    def get_procedure_data(self, procedure_id=None):
+        if procedure_id is None:
+            self.cursor.execute("""
+            SELECT pr.*,
+            pat.first_name,
+            pat.last_name
+            FROM procedures as pr
+            LEFT JOIN patients as pat ON pr.patient_id = pat.patient_id
+        """)
+        else:
+            self.cursor.execute("""
+            SELECT pr.*,
+            pat.first_name,
+            pat.last_name
+            FROM procedures as pr
+            LEFT JOIN patients as pat ON pr.patient_id = pat.patient_id
+            WHERE pr.procedure_id = ?
+            """, (procedure_id,))
+        return self.cursor.fetchall()
+    
+    def get_condition_data(self, condition_id=None):
+        if condition_id is None:
+            self.cursor.execute("""
+            SELECT c.*,
+            p.first_name,
+            p.last_name
+            FROM conditions as c
+            LEFT JOIN patients as p ON c.patient_id = p.patient_id
+        """)
+        else:
+            self.cursor.execute("""
+            SELECT c.*,
+            p.first_name,
+            p.last_name
+            FROM conditions as c
+            LEFT JOIN patients as p ON c.patient_id = p.patient_id
+            WHERE c.condition_id = ?
+            """, (condition_id,))
+        return self.cursor.fetchall()
 
-    def intialize_database(self):
-        """
-            patients: number of patients from generator wanted
-        """
+    def get_patient_data(self, patient_id=None):
+        if patient_id is None:
+            self.cursor.execute("SELECT * FROM patients")
+        else:
+            self.cursor.execute("SELECT * FROM patients WHERE patient_id = ?", (patient_id,))
+        return self.cursor.fetchall()
 
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            self.create_tables(cursor)
+    def refresh_patient_data(self):
+        self.intialize_database()
+        self.load_patient_data()
 
-            conn.commit()
 
-patientFile= ["Verena947_Jaskolski867_67f1d1a8-ab01-f517-8e10-2f6a574aaec6.json"]
+"""
 dbManager = PatientDatabaseManager()
-data = dbManager.process_generator_output(patientsCount=10)
-dbManager.load_patient_data(patient_data=data)
+encounters = dbManager.get_encounter_data()
+print(encounters[0])
+"""
