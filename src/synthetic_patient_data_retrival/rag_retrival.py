@@ -4,9 +4,7 @@ from pathlib import Path
 
 from typing import Any, Dict, List, Tuple
 
-import chromadb
 import numpy as np
-from chromadb.config import Settings
 
 from langchain_core.documents import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -16,165 +14,31 @@ from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 
 from synthetic_patient_data_retrival.loadGeneratorData import PatientDatabaseManager
+from synthetic_patient_data_retrival.rag_metadata import (
+    document_to_rag_chunk_tuple,
+    rows_to_documents,
+)
+
 ### Read all PDFS in library
 
 
-
+def patients_to_documents(patients):
+    return rows_to_documents(patients, "patient", "patients")
 
 def encounters_to_documents(encounters):
-    all_encounters = []
-    print(f"Processing {len(encounters)} encounters")
-    for encounter in encounters:
-        try:
-            doc = Document(
-                page_content=f"{encounter['encounter_type']} | {encounter['reason']}",
-                metadata={
-                    'doc_id': encounter['encounter_id'],
-                    'doc_type': 'encounter',
-                    'patient_id': encounter['patient_id'],
-                    'encounter_id': encounter['encounter_id'],
-                    'encounter_date': encounter['encounter_date'],
-                    'encounter_type': encounter['encounter_type'],
-                    'reason': encounter['reason'],
-                    'source_file': encounter['source_file'],
-                }
-            )
-            all_encounters.append(doc)
-        except Exception as e:
-            print(f"Error processing encounter: {e}")
-    print(f"Processed {len(all_encounters)} encounters")
-    return all_encounters
-
-
-def patients_to_documents(patients):
-    all_patients = []
-    print(f"Processing {len(patients)} patients")
-    for patient in patients:
-        try:
-            doc = Document(
-                page_content=f"{patient['first_name']} | {patient['last_name']} | {patient['gender']} | {patient['birth_date']}",
-                metadata={
-                    'doc_id': patient['patient_id'],
-                    'doc_type': 'patient',
-                    'patient_id': patient['patient_id'],
-                    'first_name': patient['first_name'],
-                    'last_name': patient['last_name'],
-                    'birth_date': patient['birth_date'],
-                    'gender': patient['gender'],
-                    'source_file': patient['source_file'],
-                }
-            )
-            all_patients.append(doc)
-        except Exception as e:
-            print(f"Error processing patient: {e}")
-    print(f"Processed {len(all_patients)} patients")
-    return all_patients
-
+    return rows_to_documents(encounters, "encounter", "encounters")
 
 def conditions_to_documents(conditions):
-    all_conditions = []
-    print(f"Processing {len(conditions)} conditions")
-    for condition in conditions:
-        try:
-            doc = Document(
-                page_content=f"{condition['description']}",
-                metadata={
-                    'doc_id': condition['condition_id'],
-                    'doc_type': 'condition',
-                    'patient_id': condition['patient_id'],
-                    'encounter_id': condition['encounter_id'],
-                    'condition_id': condition['condition_id'],
-                    'code': condition['code'],
-                    'description': condition['description'],
-                    'onset_date': condition['onset_date'],
-                    'source_file': condition['source_file']
-                }
-            )
-            all_conditions.append(doc)
-        except Exception as e:
-            print(f"Error processing condition: {e}")
-    print(f"Processed {len(all_conditions)} conditions")
-    return all_conditions
-
+    return rows_to_documents(conditions, "condition", "conditions")
 
 def observations_to_documents(observations):
-    all_observations = []
-    print(f"Processing {len(observations)} observations")
-    for observation in observations:
-        try:
-            doc = Document(
-                page_content=f"{observation['description']}: {observation['value']} {observation['unit']}",
-                metadata={
-                    'doc_id': observation['observation_id'],
-                    'doc_type': 'observation',
-                    'patient_id': observation['patient_id'],
-                    'encounter_id': observation['encounter_id'],
-                    'observation_id': observation['observation_id'],
-                    'observation_date': observation['observation_date'],
-                    'code': observation['code'],
-                    'description': observation['description'],
-                    'value': observation['value'],
-                    'unit': observation['unit'],
-                    'source_file': observation['source_file']
-                }
-            )
-            all_observations.append(doc)
-        except Exception as e:
-            print(f"Error processing observation: {e}")
-    print(f"Processed {len(all_observations)} observations")
-    return all_observations
-
+    return rows_to_documents(observations, "observation", "observations")
 
 def medications_to_documents(medications):
-    all_medications = []
-    print(f"Processing {len(medications)} medications")
-    for medication in medications:
-        try:
-            doc = Document(
-                page_content=f"{medication['description']} | {medication['start_date']} | {medication['end_date']}",
-                metadata={
-                    'doc_id': medication['medication_id'],
-                    'doc_type': 'medication',
-                    'patient_id': medication['patient_id'],
-                    'encounter_id': medication['encounter_id'],
-                    'medication_id': medication['medication_id'],
-                    'description': medication['description'],
-                    'start_date': medication['start_date'],
-                    'end_date': medication['end_date'],
-                    'source_file': medication['source_file']
-                }
-            )
-            all_medications.append(doc)
-        except Exception as e:
-            print(f"Error processing medication: {e}")
-    print(f"Processed {len(all_medications)} medications")
-    return all_medications
-
+    return rows_to_documents(medications, "medication", "medications")
 
 def procedures_to_documents(procedures):
-    all_procedures = []
-    print(f"Processing {len(procedures)} procedures")
-    for procedure in procedures:
-        try:
-            doc = Document(
-                page_content=f"{procedure['description']}",
-                metadata={
-                    'doc_id': procedure['procedure_id'],
-                    'doc_type': 'procedure',
-                    'patient_id': procedure['patient_id'],
-                    'encounter_id': procedure['encounter_id'],
-                    'procedure_id': procedure['procedure_id'],
-                    'description': procedure['description'],
-                    'procedure_date': procedure['procedure_date'],
-                    'source_file': procedure['source_file']
-                }
-            )
-            all_procedures.append(doc)
-        except Exception as e:
-            print(f"Error processing procedure: {e}")
-    print(f"Processed {len(all_procedures)} procedures")
-    return all_procedures
-
+    return rows_to_documents(procedures, "procedure", "procedures")
 
 ### Text splitting into chunks
 
@@ -415,7 +279,6 @@ class RAGRetriever:
             print(f"Error during retrieval: {e}")
             return []
 
-@staticmethod
 def process_all_documents(dbManager):
     patient_documents = patients_to_documents(dbManager.get_patient_data())
     encounter_documents = encounters_to_documents(dbManager.get_encounter_data())
@@ -426,10 +289,19 @@ def process_all_documents(dbManager):
     return patient_documents + encounter_documents + condition_documents + observation_documents + medication_documents + procedure_documents
 
 
-dbManager = PatientDatabaseManager()
 
+
+dbManager = PatientDatabaseManager()
+embedding_manager = EmbeddingManager()
 
 all_documents = process_all_documents(dbManager)
+documents = []
+embeddings = []
+for doc in all_documents:
+    embeddings.append(embedding_manager.generate_embeddings([doc.page_content]))
+    documents.append(
+        document_to_rag_chunk_tuple(doc, embedding_manager.model_name)
+    )
 
 
 print(f"Total documents: {len(all_documents)}")
