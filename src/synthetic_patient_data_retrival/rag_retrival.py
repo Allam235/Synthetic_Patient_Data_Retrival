@@ -5,74 +5,27 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 import numpy as np
+print("Finished importing basic modules")
 
 from langchain_core.documents import Document
-from langchain_text_splitters import RecursiveCharacterTextSplitter
-
 from sentence_transformers import SentenceTransformer
 
+print("Finished importing sentence transformer modules")
 from sklearn.metrics.pairwise import cosine_similarity
 
+print("Finished importing sklearn modules")
 from synthetic_patient_data_retrival.loadGeneratorData import PatientDatabaseManager
 from synthetic_patient_data_retrival.rag_metadata import (
     document_to_rag_chunk_tuple,
     rows_to_documents,
 )
+print("Finished importing metadata modules")
 
-### Read all PDFS in library
+### Helper Functions to convert SQLite rows to Langchain Documents
 
-
-def patients_to_documents(patients):
-    return rows_to_documents(patients, "patient", "patients")
-
-def encounters_to_documents(encounters):
-    return rows_to_documents(encounters, "encounter", "encounters")
-
-def conditions_to_documents(conditions):
-    return rows_to_documents(conditions, "condition", "conditions")
-
-def observations_to_documents(observations):
-    return rows_to_documents(observations, "observation", "observations")
-
-def medications_to_documents(medications):
-    return rows_to_documents(medications, "medication", "medications")
-
-def procedures_to_documents(procedures):
-    return rows_to_documents(procedures, "procedure", "procedures")
-
-### Text splitting into chunks
-
-def split_documents(documents, chunk_size=1000, chunk_overlap=200):
-    '''
-    Splits a list of Langchain Documents into smaller chunks
-
-    Args:
-    documents: List of Langchain Documents
-    chunk_size: Maximum size of each chunk (default: 1000 characters)
-    chunk_overlap: Number of characters to overlap between chunks (default: 200 characters)
-    '''
-
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap,
-        length_function=len,
-        separators=["\n\n", "\n", " ", ""]
-    )
-
-    split_docs = text_splitter.split_documents(documents)
-    print(f"Split {len(documents)} documents into {len(split_docs)} chunks")
-
-    # Show example of a chunk
-    if split_docs:
-        print(f"\nExample chunk:")
-        print(f"Content: {split_docs[0].page_content[:200]}...")
-        print(f"Metadata: {split_docs[0].metadata}")
-    
-    return split_docs
 
 
 ### Embeddings and VectorStoreDB
-
 class EmbeddingManager:
     def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
         """
@@ -90,10 +43,16 @@ class EmbeddingManager:
         try:
             print(f"Loading embedding model: {self.model_name}")
             self.model = SentenceTransformer(self.model_name)
-            print(f"Model loaded successfully. Embedding dimension: {self.model.get_embedding_dimension()}")
+            print(f"Model loaded successfully. Embedding dimension: {self.embedding_dim}")
         except Exception as e:
             print(f"Error loading model {self.model_name}: {e}")
             raise
+
+    @property
+    def embedding_dim(self) -> int:
+        if hasattr(self.model, "get_sentence_embedding_dimension"):
+            return self.model.get_sentence_embedding_dimension()
+        return self.model.get_embedding_dimension()
 
     def generate_embeddings(self, texts: List[str]) -> np.ndarray:
         """
@@ -107,119 +66,77 @@ class EmbeddingManager:
         """
         if not self.model:
             raise ValueError("Embedding model is not loaded.")
+        if not texts:
+            return np.empty((0, self.embedding_dim), dtype=np.float32)
         
         try:
-            embeddings = self.model.encode(texts, convert_to_numpy=True)
+            embeddings = self.model.encode(
+                texts,
+                convert_to_numpy=True,
+                show_progress_bar=len(texts) > 32,
+            )
+            embeddings = np.asarray(embeddings, dtype=np.float32)
+            if embeddings.ndim == 1:
+                embeddings = embeddings.reshape(1, -1)
             return embeddings
         except Exception as e:
             print(f"Error generating embeddings: {e}")
             raise
 
-### VectorStore
-
-class VectorStore:
-    """Manages document embeddings in a ChromaDB vector store"""
-    
-    def __init__(self, collection_name: str = "pdf_documents", persist_directory: str = "../data/vector_store"):
-        """
-        Initialize the vector store
-        
-        Args:
-            collection_name: Name of the ChromaDB collection
-            persist_directory: Directory to persist the vector store
-        """
-        self.collection_name = collection_name
-        self.persist_directory = persist_directory
-        self.client = None
-        self.collection = None
-        self._initialize_store()
-
-    def _initialize_store(self):
-        """Initialize ChromaDB client and collection"""
-        try:
-            # Create persistent ChromaDB client
-            os.makedirs(self.persist_directory, exist_ok=True)
-            self.client = chromadb.PersistentClient(path=self.persist_directory)
-            
-            # Get or create collection(where the vector embeddings will be stored)
-            self.collection = self.client.get_or_create_collection(
-                name=self.collection_name,
-                metadata={"description": "PDF document embeddings for RAG"}
-            )
-            print(f"Vector store initialized. Collection: {self.collection_name}")
-            print(f"Existing documents in collection: {self.collection.count()}")
-            
-        except Exception as e:
-            print(f"Error initializing vector store: {e}")
-            raise
-
-    def add_documents(self, documents: List[Any], embeddings: np.ndarray):
-        """
-        Add documents and their embeddings to the vector store
-        
-        Args:
-            documents: List of chunked Langchained Documents
-            embeddings: Corresponding embeddings for the documents
-        """
-        if len(documents) != len(embeddings):
-            raise ValueError("Number of documents must match number of embeddings")
-        
-        print(f"Adding {len(documents)} documents to vector store...")
-        
-        # Prepare data for ChromaDB
-        ids = []
-        metadatas = []
-        documents_text = []
-        embeddings_list = []
-        
-        for i, (doc, embedding) in enumerate(zip(documents, embeddings)):
-            # Generate unique ID
-            doc_id = f"doc_{uuid.uuid4().hex[:8]}_{i}"
-            ids.append(doc_id)
-            
-            # Prepare metadata
-            metadata = dict(doc.metadata)
-            metadata['doc_index'] = i
-            metadata['content_length'] = len(doc.page_content)
-            metadatas.append(metadata)
-            
-            # Document content
-            documents_text.append(doc.page_content)
-            
-            # Embedding
-            embeddings_list.append(embedding.tolist())
-        
-        # Add to collection
-        try:
-            self.collection.add(
-                ids=ids,
-                embeddings=embeddings_list,
-                metadatas=metadatas,
-                documents=documents_text
-            )
-            print(f"Successfully added {len(documents)} documents to vector store")
-            print(f"Total documents in collection: {self.collection.count()}")
-            
-        except Exception as e:
-            print(f"Error adding documents to vector store: {e}")
-            raise
-
-
 ### RAG Retriever Pipeline from VectorDB
-
 class RAGRetriever:
     """Handles query-based retrieval from the vector store"""
     
-    def __init__(self, vector_store: VectorStore, embedding_manager: EmbeddingManager):
+    def __init__(self, dbManager: PatientDatabaseManager, embedding_manager: EmbeddingManager):
         """
         Initialize the retriever
         
         Args:
-            vector_store: Vector store containing document embeddings
+            dbManager: Database manager containing document embeddings
             embedding_manager: Manager for generating query embeddings
         """
-        self.vector_store = vector_store
+        self.dbManager = dbManager
         self.embedding_manager = embedding_manager
+
+    @staticmethod
+    def patients_to_documents(patients):
+        return rows_to_documents(patients, "patient", "patients")
+
+    @staticmethod
+    def encounters_to_documents(encounters):
+        return rows_to_documents(encounters, "encounter", "encounters")
+
+    @staticmethod
+    def conditions_to_documents(conditions):
+        return rows_to_documents(conditions, "condition", "conditions")
+
+    @staticmethod
+    def observations_to_documents(observations):
+        return rows_to_documents(observations, "observation", "observations")
+
+    @staticmethod
+    def medications_to_documents(medications):
+        return rows_to_documents(medications, "medication", "medications")
+
+    @staticmethod
+    def procedures_to_documents(procedures):
+        return rows_to_documents(procedures, "procedure", "procedures")
+
+    def process_all_documents(self) -> List[Document]:
+        """
+        Process all documents from the database into a list of langchain documents
+        
+        Returns:
+            List of langchain documents
+        """
+        patient_documents = self.patients_to_documents(self.dbManager.get_patient_data())
+        encounter_documents = self.encounters_to_documents(self.dbManager.get_encounter_data())
+        condition_documents = self.conditions_to_documents(self.dbManager.get_condition_data())
+        observation_documents = self.observations_to_documents(self.dbManager.get_observation_data())
+        medication_documents = self.medications_to_documents(self.dbManager.get_medication_data())
+        procedure_documents = self.procedures_to_documents(self.dbManager.get_procedure_data())
+        return patient_documents + encounter_documents + condition_documents + observation_documents + medication_documents + procedure_documents
+
 
     def retrieve(self, query: str, top_k: int = 5, score_threshold: float = 0.0) -> List[Dict[str, Any]]:
         """
@@ -279,36 +196,59 @@ class RAGRetriever:
             print(f"Error during retrieval: {e}")
             return []
 
-def process_all_documents(dbManager):
-    patient_documents = patients_to_documents(dbManager.get_patient_data())
-    encounter_documents = encounters_to_documents(dbManager.get_encounter_data())
-    condition_documents = conditions_to_documents(dbManager.get_condition_data())
-    observation_documents = observations_to_documents(dbManager.get_observation_data())
-    medication_documents = medications_to_documents(dbManager.get_medication_data())
-    procedure_documents = procedures_to_documents(dbManager.get_procedure_data())
-    return patient_documents + encounter_documents + condition_documents + observation_documents + medication_documents + procedure_documents
+    def add_documents(self, files: List[str]):
+        """
+        Add FHIR JSON files to the database
+        
+        Args:
+            files: List of file paths to add
+        """
+        self.dbManager.load_patient_data(files=files, patient_data=None, patientsCount=None)
+
+    def add_embeddings(self, documents: List[Document] = None, reset: bool = False):
+        """
+        Add embeddings to the database(embeds incoming documents if provided)
+        
+        Args:
+            documents: List of langchain documents to add
+            reset: Whether to reembed all the existing embeddings(embeds incoming vectors if provided)
+        """
+        batch: List[Document] = []
+        if documents:
+            batch.extend(documents)
+        if reset:
+            self.dbManager.create_vector_tables(
+                vector_size=self.embedding_manager.embedding_dim,
+            )
+            self.dbManager.conn.commit()
+            batch.extend(self.process_all_documents())
+        if not batch:
+            raise ValueError("add_embeddings requires documents and/or reset=True")
+
+        texts = [doc.page_content for doc in batch]
+        vectors = self.embedding_manager.generate_embeddings(texts)
+        chunk_rows = [
+            document_to_rag_chunk_tuple(doc, self.embedding_manager.model_name)
+            for doc in batch
+        ]
+        self.dbManager.add_embeddings(chunk_rows, vectors)
+
 
 
 
 
 dbManager = PatientDatabaseManager()
 embedding_manager = EmbeddingManager()
+rag_retriever = RAGRetriever(dbManager, embedding_manager)
 
-all_documents = process_all_documents(dbManager)
-documents = []
-embeddings = []
-for doc in all_documents:
-    embeddings.append(embedding_manager.generate_embeddings([doc.page_content]))
-    documents.append(
-        document_to_rag_chunk_tuple(doc, embedding_manager.model_name)
-    )
+rag_retriever.add_embeddings(reset=True)
 
 
-print(f"Total documents: {len(all_documents)}")
+# print(f"Total documents: {len(all_documents)}")
 
-for doc in all_documents:
-    if len(doc.page_content) <29:
-        print(doc.page_content)
+# for doc in all_documents:
+#     if len(doc.page_content) <29:
+#         print(doc.page_content)
 
 """
 embedding_manager = EmbeddingManager()

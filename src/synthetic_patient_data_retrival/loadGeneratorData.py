@@ -1,6 +1,10 @@
-import sqlite3
+import hashlib
 import json
+import sqlite3
 from pathlib import Path
+
+import numpy as np
+import sqlite_vec
 
 
 class PatientDatabaseManager:
@@ -20,12 +24,25 @@ class PatientDatabaseManager:
         self.conn.row_factory = sqlite3.Row
         self.cursor = self.conn.cursor()
 
+        self.conn.enable_load_extension(True)
+        sqlite_vec.load(self.conn)
+        self.conn.enable_load_extension(False)
+        self.vector_size = None
+
     def close(self):
         self.conn.close()
 
     def intialize_database(self):
         self.create_tables(self.cursor)
         self.conn.commit()
+
+    @staticmethod
+    def get_stable_chunk_id(resource_type: str, source_id: str) -> int:
+        key = f"{resource_type}\0{source_id}".encode("utf-8")
+        digest = hashlib.blake2b(key, digest_size=8).digest()
+        # positive int64 for SQLite rowid
+        return int.from_bytes(digest, "big") & 0x7FFFFFFFFFFFFFFF
+
     @staticmethod
     def _get_code_and_description(codeable):
         code = None
@@ -331,7 +348,6 @@ class PatientDatabaseManager:
             self._merge_patient_data(all_data, all_data)
         return all_data
 
-
     @staticmethod
     def create_tables(cursor):
         cursor.executescript(            """
@@ -628,11 +644,95 @@ class PatientDatabaseManager:
 
     def refresh_patient_data(self):
         self.intialize_database()
-        self.load_patient_data()
 
+    ### Vector Database Functions ###
 
-"""
+    def create_vector_tables(self, vector_size: int):
+        """
+        Chunk rows (text + filterable metadata) plus vec0 embeddings.
+        Insert embeddings with rowid = rag_chunks.chunk_id.
+        """
+        self.vector_size = vector_size
+        self.cursor.executescript(
+            """
+            DROP TABLE IF EXISTS rag_chunk_embeddings;
+            DROP TABLE IF EXISTS rag_chunks;
+
+            CREATE TABLE rag_chunks (
+                chunk_id INTEGER PRIMARY KEY,
+                source_id TEXT NOT NULL,
+                resource_type TEXT NOT NULL,
+                patient_id TEXT NOT NULL,
+                encounter_id TEXT,
+                code TEXT,
+                event_date TEXT,
+                source_file TEXT,
+                content TEXT NOT NULL,
+                embedding_model TEXT,
+                metadata_json TEXT,
+                FOREIGN KEY (patient_id) REFERENCES patients(patient_id),
+                UNIQUE (resource_type, source_id)
+            );
+
+            CREATE INDEX idx_rag_chunks_patient_id ON rag_chunks(patient_id);
+            CREATE INDEX idx_rag_chunks_encounter_id ON rag_chunks(encounter_id);
+            CREATE INDEX idx_rag_chunks_resource_type ON rag_chunks(resource_type);
+            CREATE INDEX idx_rag_chunks_source ON rag_chunks(resource_type, source_id);
+
+            CREATE VIRTUAL TABLE rag_chunk_embeddings USING vec0(
+                embedding float[{vector_size}]
+            );
+            """.format(vector_size=vector_size)
+        )
+
+    def add_embeddings(self, chunk_rows, vectors):
+        if len(chunk_rows) != len(vectors):
+            raise ValueError("chunk_rows and vectors must have the same length")
+
+        sql_statement_chunks = """
+            INSERT INTO rag_chunks
+                (chunk_id,
+                source_id,
+                resource_type,
+                patient_id,
+                encounter_id,
+                code,
+                event_date,
+                source_file,
+                content,
+                embedding_model,
+                metadata_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT (resource_type, source_id) DO UPDATE SET
+                chunk_id = excluded.chunk_id,
+                patient_id = excluded.patient_id,
+                encounter_id = excluded.encounter_id,
+                code = excluded.code,
+                event_date = excluded.event_date,
+                source_file = excluded.source_file,
+                content = excluded.content,
+                embedding_model = excluded.embedding_model,
+                metadata_json = excluded.metadata_json
+        """
+
+        sql_statement_embeddings = """
+            INSERT OR REPLACE INTO rag_chunk_embeddings
+                (rowid, embedding)
+            VALUES (?, ?)
+        """
+
+        vec_rows = []
+        # Convert the Numpy array to a list of floats for the embedding db
+        for chunk_row, vector in zip(chunk_rows, vectors):
+            chunk_id = chunk_row[0]
+            flat = np.asarray(vector, dtype=np.float32).reshape(-1)
+            blob = sqlite_vec.serialize_float32(flat.tolist())
+            vec_rows.append((chunk_id, blob))
+
+        with self.conn:
+            self.cursor.executemany(sql_statement_chunks, chunk_rows)
+            self.cursor.executemany(sql_statement_embeddings, vec_rows)
+
 dbManager = PatientDatabaseManager()
-encounters = dbManager.get_encounter_data()
-print(encounters[0])
-"""
+
+
