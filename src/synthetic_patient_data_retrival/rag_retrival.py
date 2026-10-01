@@ -5,9 +5,10 @@ from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 import numpy as np
+from langchain_core.documents import Document
+import logging
 print("Finished importing basic modules")
 
-from langchain_core.documents import Document
 from sentence_transformers import SentenceTransformer
 
 print("Finished importing sentence transformer modules")
@@ -87,7 +88,7 @@ class EmbeddingManager:
 class RAGRetriever:
     """Handles query-based retrieval from the vector store"""
     
-    def __init__(self, dbManager: PatientDatabaseManager, embedding_manager: EmbeddingManager):
+    def __init__(self, dbManager: PatientDatabaseManager, embedding_manager: EmbeddingManager, log_file: str = 'app.log'):
         """
         Initialize the retriever
         
@@ -97,6 +98,14 @@ class RAGRetriever:
         """
         self.dbManager = dbManager
         self.embedding_manager = embedding_manager
+        # Set up logging
+        self.logger = logging.getLogger(__name__)
+        self.logger.setLevel(logging.DEBUG)
+        file_handler = logging.FileHandler(log_file, mode='w')
+        file_handler.setLevel(logging.DEBUG)
+        formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+        file_handler.setFormatter(formatter)
+        self.logger.addHandler(file_handler)
 
     @staticmethod
     def patients_to_documents(patients):
@@ -232,6 +241,40 @@ class RAGRetriever:
             for doc in batch
         ]
         self.dbManager.add_embeddings(chunk_rows, vectors)
+        self.dbManager.rebuild_patients_fts()
+        self.dbManager.rebuild_encounters_fts()
+        self.dbManager.conn.commit()
+
+    def retrieve_metadata_filters(self, query: str, top_k: int = 5, score_threshold: float = 0.0) -> List[Dict[str, Any]]:
+        """
+        Retrieve relevant documents for a query with metadata filters
+        
+        Args:
+            query: The search query
+            top_k: Number of top results to return
+            score_threshold: Minimum similarity score threshold
+        """
+        print(f"Retrieving documents for query: '{query}'")
+        print(f"Top K: {top_k}, Score threshold: {score_threshold}")
+
+        # Generate query embedding
+        query_embedding = self.embedding_manager.generate_embeddings([query])[0]
+        
+        # Search in vector store
+        try:
+            results = self.dbManager.search_patients_fts(query, top_k)
+            self.logger.info(f"Patients results: ")
+            for result in results:
+                self.logger.info(result)
+            encounters_results = self.dbManager.search_encounters_fts(query, top_k)
+            self.logger.info(f"Encounters results: ")
+            for result in encounters_results:
+                self.logger.info(result)
+            results.extend(encounters_results)
+            return results
+        except Exception as e:
+            self.logger.error(f"Error during retrieval: {e}")
+            return []
 
 
 
@@ -240,10 +283,11 @@ class RAGRetriever:
 dbManager = PatientDatabaseManager()
 embedding_manager = EmbeddingManager()
 rag_retriever = RAGRetriever(dbManager, embedding_manager)
-
 rag_retriever.add_embeddings(reset=True)
+filters = rag_retriever.retrieve_metadata_filters('When did Zada last visit the hospital?', top_k=5, score_threshold=0.0)
 
-
+for filter in filters:
+    print(filter)
 # print(f"Total documents: {len(all_documents)}")
 
 # for doc in all_documents:

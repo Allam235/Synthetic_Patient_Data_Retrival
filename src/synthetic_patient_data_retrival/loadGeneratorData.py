@@ -1,7 +1,9 @@
 import hashlib
 import json
+import re
 import sqlite3
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import sqlite_vec
@@ -352,6 +354,8 @@ class PatientDatabaseManager:
     def create_tables(cursor):
         cursor.executescript(            """
 
+            DROP TABLE IF EXISTS patients_fts;
+            DROP TABLE IF EXISTS encounters_fts;
             DROP TABLE IF EXISTS patients;
             DROP TABLE IF EXISTS encounters;
             DROP TABLE IF EXISTS conditions;
@@ -455,6 +459,216 @@ class PatientDatabaseManager:
             
             """
         )
+        PatientDatabaseManager._create_patients_fts(cursor)
+        PatientDatabaseManager._create_encounters_fts(cursor)
+
+    @staticmethod
+    def _create_patients_fts(cursor):
+        """FTS5 is built into SQLite (not a loadable extension like sqlite-vec)."""
+        cursor.executescript(
+            """
+            DROP TABLE IF EXISTS patients_fts;
+            CREATE VIRTUAL TABLE patients_fts USING fts5(
+                identity_text,
+                patient_id UNINDEXED,
+                first_name UNINDEXED,
+                last_name UNINDEXED,
+                birth_date UNINDEXED,
+                gender UNINDEXED,
+                tokenize='unicode61 remove_diacritics 2'
+            );
+            """
+        )
+
+    @staticmethod
+    def _create_encounters_fts(cursor):
+        cursor.executescript(
+            """
+            DROP TABLE IF EXISTS encounters_fts;
+            CREATE VIRTUAL TABLE encounters_fts USING fts5(
+                identity_text,
+                encounter_id UNINDEXED,
+                patient_id UNINDEXED,
+                encounter_date UNINDEXED,
+                encounter_type UNINDEXED,
+                reason UNINDEXED,
+                tokenize='unicode61 remove_diacritics 2'
+            );
+            """
+        )
+
+    @staticmethod
+    def _patient_identity_text(row) -> str:
+        parts = [
+            row["patient_id"],
+            row["first_name"],
+            row["last_name"],
+            row["birth_date"],
+            row["gender"],
+            # Remove numbers from first and last name
+            re.sub(r'\d+', '', row["first_name"]),
+            re.sub(r'\d+', '', row["last_name"]),
+        ]
+        if row["source_file"]:
+            parts.append(Path(row["source_file"]).stem.replace("_", " "))
+        return " ".join(p for p in parts if p)
+
+    @staticmethod
+    def _encounter_identity_text(row) -> str:
+        parts = [
+            row["encounter_id"],
+            row["patient_id"],
+            row["encounter_date"],
+            row["encounter_type"],
+            row["reason"],
+            row["first_name"],
+            row["last_name"],
+            # Remove numbers from first and last name
+            re.sub(r'\d+', '', row["first_name"]),
+            re.sub(r'\d+', '', row["last_name"]),
+        ]
+        if row["source_file"]:
+            parts.append(Path(row["source_file"]).stem.replace("_", " "))
+        return " ".join(p for p in parts if p)
+
+    @staticmethod
+    def tokenize_query_for_fts(query: str) -> str | None:
+        tokens = re.findall(r"[A-Za-z0-9\-]+", query)
+        tokens = [t for t in tokens if len(t) >= 2]
+        if not tokens:
+            return None
+        return " OR ".join(f'"{t}"' for t in tokens)
+
+    def rebuild_patients_fts(self):
+        self._create_patients_fts(self.cursor)
+        self.cursor.execute(
+            "SELECT patient_id, first_name, last_name, birth_date, gender, source_file FROM patients"
+        )
+        rows = [
+            (
+                self._patient_identity_text(row),
+                row["patient_id"],
+                row["first_name"],
+                row["last_name"],
+                row["birth_date"],
+                row["gender"],
+            )
+            for row in self.cursor.fetchall()
+        ]
+        if rows:
+            self.cursor.executemany(
+                """
+                INSERT INTO patients_fts (
+                    identity_text, patient_id, first_name, last_name, birth_date, gender
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+
+    def rebuild_encounters_fts(self):
+        self._create_encounters_fts(self.cursor)
+        self.cursor.execute(
+            """
+            SELECT
+                e.encounter_id,
+                e.patient_id,
+                e.encounter_date,
+                e.encounter_type,
+                e.reason,
+                e.source_file,
+                p.first_name,
+                p.last_name
+            FROM encounters AS e
+            LEFT JOIN patients AS p ON e.patient_id = p.patient_id
+            """
+        )
+        rows = [
+            (
+                self._encounter_identity_text(row),
+                row["encounter_id"],
+                row["patient_id"],
+                row["encounter_date"],
+                row["encounter_type"],
+                row["reason"],
+            )
+            for row in self.cursor.fetchall()
+        ]
+        if rows:
+            self.cursor.executemany(
+                """
+                INSERT INTO encounters_fts (
+                    identity_text,
+                    encounter_id,
+                    patient_id,
+                    encounter_date,
+                    encounter_type,
+                    reason
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+    
+    def search_patients_fts(self, query: str, limit: int = 3) -> list[dict[str, Any]]:
+        match_expr = self.tokenize_query_for_fts(query)
+        if not match_expr:
+            return []
+        self.cursor.execute(
+            """
+            SELECT patient_id, first_name, last_name, birth_date, gender, bm25(patients_fts) AS rank
+            FROM patients_fts
+            WHERE patients_fts MATCH ?
+            ORDER BY rank
+            LIMIT ?
+            """,
+            (match_expr, limit),
+        )
+        return [dict(row) for row in self.cursor.fetchall()]
+
+    def search_encounters_fts(
+        self,
+        query: str,
+        limit: int = 3,
+        patient_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        match_expr = self.tokenize_query_for_fts(query)
+        if not match_expr:
+            return []
+        if patient_id is None:
+            self.cursor.execute(
+                """
+                SELECT
+                    encounter_id,
+                    patient_id,
+                    encounter_date,
+                    encounter_type,
+                    reason,
+                    bm25(encounters_fts) AS rank
+                FROM encounters_fts
+                WHERE encounters_fts MATCH ?
+                ORDER BY rank
+                LIMIT ?
+                """,
+                (match_expr, limit),
+            )
+        else:
+            self.cursor.execute(
+                """
+                SELECT
+                    encounter_id,
+                    patient_id,
+                    encounter_date,
+                    encounter_type,
+                    reason,
+                    bm25(encounters_fts) AS rank
+                FROM encounters_fts
+                WHERE encounters_fts MATCH ?
+                  AND patient_id = ?
+                ORDER BY rank
+                LIMIT ?
+                """,
+                (match_expr, patient_id, limit),
+            )
+        return [dict(row) for row in self.cursor.fetchall()]
 
     @staticmethod
     def _load_patients_data(cursor, patients):
@@ -521,6 +735,8 @@ class PatientDatabaseManager:
         self._load_observations_data(self.cursor, patient_data["observations"])
         self._load_medications_data(self.cursor, patient_data["medications"])
         self._load_procedures_data(self.cursor, patient_data["procedures"])
+        self.rebuild_patients_fts()
+        self.rebuild_encounters_fts()
         self.conn.commit()
 
     def check_loaded_data(self):
