@@ -1,5 +1,5 @@
 import streamlit as st
-from synthetic_patient_data_retrival.loadGeneratorData import PatientDatabaseManager
+from synthetic_patient_data_retrival.DatabaseManager import PatientDatabaseManager
 
 
 

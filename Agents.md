@@ -23,7 +23,13 @@ All agents should not modify python code as most code should be written by human
 │                                              # patients_fts, rag_chunks_fts
 ├── src/synthetic_patient_data_retrival/
 │   ├── app.py                                 # Streamlit UI
-│   ├── loadGeneratorData.py                   # FHIR JSON → SQLite, vec/FTS DDL, index writes
+│   ├── DatabaseManager/                       # SQLite access: one connection, three stores
+│   │   ├── __init__.py                        # PatientDatabaseManager facade (import this)
+│   │   ├── connection.py                      # DBConnection: FK pragma, Row factory, sqlite-vec
+│   │   ├── original_store.py                  # FHIR → clinical tables, DDL, get_* queries
+│   │   ├── fts_store.py                       # patients_fts / encounters_fts (FTS5 BM25)
+│   │   └── vector_store.py                    # rag_chunks + vec0, stable chunk_id, embeddings
+│   ├── loadGeneratorData.py                   # deprecated monolith; do not import or extend
 │   ├── rag_metadata.py                        # per-resource metadata + chunk tuple mapping
 │   ├── rag_retrival.py                        # EmbeddingManager, RAGRetriever, indexing
 │   ├── output.json                            # sample / debug dump
@@ -39,7 +45,7 @@ All agents should not modify python code as most code should be written by human
 ## Pipeline
 
 1. Synthea JAR writes FHIR Bundles under `data/generator/output/fhir/`.
-2. `PatientDatabaseManager` in `loadGeneratorData.py` parses Patient, Encounter, Condition, Observation, MedicationRequest, and Procedure resources into SQLite. Reload refreshes `patients_fts` (FTS5).
+2. `PatientDatabaseManager` (`DatabaseManager/__init__.py`) loads FHIR via `OriginalStore`; `load_patient_data` rebuilds `patients_fts` and `encounters_fts` via `FTSStore`.
 3. `rag_metadata.py` defines document metadata and `rag_chunks` columns; `rag_retrival.py` builds LangChain `Document`s and indexes via `RAGRetriever.add_embeddings` (batch embed → `rag_chunks` + sqlite-vec `vec0`, then `rag_chunks_fts` rebuild).
 4. `app.py` is the Streamlit query form; retrieval (patient FTS → filter `patient_id` → hybrid search) is not wired yet.
 
@@ -53,7 +59,8 @@ Use **`search_patients_fts`** on natural-language queries to shortlist 2–3 `pa
 
 ## Notes
 
-- `/data` and `.env` are listed in `.cursorignore` and `.gitignore`. Recreate the DB with `loadGeneratorData.py`; do not commit `patient.db` or Synthea output.
+- `/data` and `.env` are listed in `.cursorignore` and `.gitignore`. Recreate the DB by calling `PatientDatabaseManager` from your script or notebook (`intialize_database`, `load_patient_data`); do not commit `patient.db` or Synthea output.
+- Import: `from synthetic_patient_data_retrival.DatabaseManager import PatientDatabaseManager`. **`loadGeneratorData.py` is deprecated** (legacy copy only).
 - Dependencies: **`uv sync`**; run scripts with the project venv (`uv run python …` or activate `.venv`).
 - Stable index key: **`(resource_type, source_id)`** with **`chunk_id`** = vec **`rowid`** (hash of type + id).
 - Package name and some filenames keep the historical spelling `retrival`.

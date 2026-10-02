@@ -1,6 +1,6 @@
 # Synthetic Patient Data Retrieval
 
-A Streamlit app for asking questions over **synthetic** patient records. Synthea generates FHIR Bundles; `loadGeneratorData.py` loads them into SQLite; retrieval is being built as a hybrid RAG pipeline over that same database.
+A Streamlit app for asking questions over **synthetic** patient records. Synthea generates FHIR Bundles; `PatientDatabaseManager` from `DatabaseManager/` loads them into SQLite; retrieval is being built as a hybrid RAG pipeline over that same database.
 
 ```powershell
 uv run streamlit run src/synthetic_patient_data_retrival/app.py
@@ -73,11 +73,11 @@ Query flow:
 3. `rag_retrival.py` currently converts each table row into a LangChain `Document` (sparse `page_content` + ID metadata). Chroma embed/query code is still the leftover skeleton.
 4. `app.py` is the Streamlit form; it is not wired to retrieval yet.
 
-`data/` is gitignored and cursorignored. Recreate `patient.db` with `loadGeneratorData.py`. Do not commit the Synthea JAR output or the SQLite file.
+`data/` is gitignored and cursorignored. Recreate `patient.db` with `PatientDatabaseManager` from `DatabaseManager/`. Do not commit the Synthea JAR output or the SQLite file.
 
 ## Project layout
 
-See `Agents.md` for the tree agents should follow. Application code lives in `src/synthetic_patient_data_retrival/`. `notebooks_archive/` is the original LangChain PDF/Chroma tutorial.
+See `Agents.md` for the tree agents should follow. Application code lives in `src/synthetic_patient_data_retrival/`. `notebooks_archive/` is the original LangChain PDF/ChromaDB tutorial.
 
 ## Branches
 

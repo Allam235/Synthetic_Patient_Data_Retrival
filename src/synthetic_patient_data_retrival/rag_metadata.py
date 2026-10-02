@@ -9,7 +9,7 @@ from typing import Any, Dict, Mapping, Sequence, Tuple
 
 from langchain_core.documents import Document
 
-from synthetic_patient_data_retrival.loadGeneratorData import PatientDatabaseManager
+from synthetic_patient_data_retrival.DatabaseManager import PatientDatabaseManager
 
 # ---------------------------------------------------------------------------
 # Common metadata (every resource type uses doc_id / doc_type; others when applicable)

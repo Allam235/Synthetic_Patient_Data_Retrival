@@ -1,51 +1,14 @@
-# Deprecated: This file is no longer used, use PatientDatabaseManager from DatabaseManager folder instead
-
-import hashlib
 import json
-import re
-import sqlite3
 from pathlib import Path
-from typing import Any
-
-import numpy as np
-import sqlite_vec
 
 
-class PatientDatabaseManager:
-    """
-    Manages the patient database
-    """
+class OriginalStore:
+    """FHIR ingest, relational DDL, and clinical table queries."""
 
-    def __init__(
-        self,
-        db_path=Path(__file__).resolve().parents[2] / "data" / "sqlite" / "patient.db",
-        gen_output_path=Path(__file__).resolve().parents[2] / "data" / "generator" / "output" / "fhir",
-    ):
-        self.gen_output_path = gen_output_path
-        self.db_path = db_path
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.conn = sqlite3.connect(self.db_path)
-        self.conn.row_factory = sqlite3.Row
-        self.cursor = self.conn.cursor()
-
-        self.conn.enable_load_extension(True)
-        sqlite_vec.load(self.conn)
-        self.conn.enable_load_extension(False)
-        self.vector_size = None
-
-    def close(self):
-        self.conn.close()
-
-    def intialize_database(self):
-        self.create_tables(self.cursor)
-        self.conn.commit()
-
-    @staticmethod
-    def get_stable_chunk_id(resource_type: str, source_id: str) -> int:
-        key = f"{resource_type}\0{source_id}".encode("utf-8")
-        digest = hashlib.blake2b(key, digest_size=8).digest()
-        # positive int64 for SQLite rowid
-        return int.from_bytes(digest, "big") & 0x7FFFFFFFFFFFFFFF
+    def __init__(self, conn, gen_output_path: Path):
+        self.conn = conn
+        self.cursor = conn.cursor()
+        self.gen_output_path = Path(gen_output_path)
 
     @staticmethod
     def _get_code_and_description(codeable):
@@ -139,18 +102,18 @@ class PatientDatabaseManager:
         encounter_type = None
         encounter_types = resource.get("type", [])
         if len(encounter_types) > 0:
-            code, encounter_type = PatientDatabaseManager._get_code_and_description(encounter_types[0])
+            code, encounter_type = OriginalStore._get_code_and_description(encounter_types[0])
 
         reason = None
         reason_codes = resource.get("reasonCode", [])
         if len(reason_codes) > 0:
-            code, reason = PatientDatabaseManager._get_code_and_description(reason_codes[0])
+            code, reason = OriginalStore._get_code_and_description(reason_codes[0])
 
         period = resource.get("period", {})
         encounter_date = period.get("start")
 
         subject = resource.get("subject", {})
-        patient_id = PatientDatabaseManager._get_reference_id(subject.get("reference"))
+        patient_id = OriginalStore._get_reference_id(subject.get("reference"))
 
         headers = ("encounter_id", "patient_id", "encounter_date", "encounter_type", "reason", "source_file")
         row = (
@@ -165,13 +128,13 @@ class PatientDatabaseManager:
 
     @staticmethod
     def _parse_condition(resource, source_file):
-        code, description = PatientDatabaseManager._get_code_and_description(resource.get("code"))
+        code, description = OriginalStore._get_code_and_description(resource.get("code"))
 
         subject = resource.get("subject", {})
-        patient_id = PatientDatabaseManager._get_reference_id(subject.get("reference"))
+        patient_id = OriginalStore._get_reference_id(subject.get("reference"))
 
         encounter = resource.get("encounter", {})
-        encounter_id = PatientDatabaseManager._get_reference_id(encounter.get("reference"))
+        encounter_id = OriginalStore._get_reference_id(encounter.get("reference"))
 
         onset_date = resource.get("onsetDateTime")
         if onset_date is None:
@@ -192,14 +155,14 @@ class PatientDatabaseManager:
 
     @staticmethod
     def _parse_observation(resource, source_file):
-        code, description = PatientDatabaseManager._get_code_and_description(resource.get("code"))
-        value, unit = PatientDatabaseManager._get_observation_value(resource)
+        code, description = OriginalStore._get_code_and_description(resource.get("code"))
+        value, unit = OriginalStore._get_observation_value(resource)
 
         subject = resource.get("subject", {})
-        patient_id = PatientDatabaseManager._get_reference_id(subject.get("reference"))
+        patient_id = OriginalStore._get_reference_id(subject.get("reference"))
 
         encounter = resource.get("encounter", {})
-        encounter_id = PatientDatabaseManager._get_reference_id(encounter.get("reference"))
+        encounter_id = OriginalStore._get_reference_id(encounter.get("reference"))
 
         observation_date = resource.get("effectiveDateTime")
         if observation_date is None:
@@ -236,15 +199,15 @@ class PatientDatabaseManager:
 
     @staticmethod
     def _parse_medication(resource, source_file):
-        code, description = PatientDatabaseManager._get_code_and_description(
+        code, description = OriginalStore._get_code_and_description(
             resource.get("medicationCodeableConcept")
         )
 
         subject = resource.get("subject", {})
-        patient_id = PatientDatabaseManager._get_reference_id(subject.get("reference"))
+        patient_id = OriginalStore._get_reference_id(subject.get("reference"))
 
         encounter = resource.get("encounter", {})
-        encounter_id = PatientDatabaseManager._get_reference_id(encounter.get("reference"))
+        encounter_id = OriginalStore._get_reference_id(encounter.get("reference"))
 
         dispense_request = resource.get("dispenseRequest", {})
         validity_period = dispense_request.get("validityPeriod", {})
@@ -264,13 +227,13 @@ class PatientDatabaseManager:
 
     @staticmethod
     def _parse_procedure(resource, source_file):
-        code, description = PatientDatabaseManager._get_code_and_description(resource.get("code"))
+        code, description = OriginalStore._get_code_and_description(resource.get("code"))
 
         subject = resource.get("subject", {})
-        patient_id = PatientDatabaseManager._get_reference_id(subject.get("reference"))
+        patient_id = OriginalStore._get_reference_id(subject.get("reference"))
 
         encounter = resource.get("encounter", {})
-        encounter_id = PatientDatabaseManager._get_reference_id(encounter.get("reference"))
+        encounter_id = OriginalStore._get_reference_id(encounter.get("reference"))
 
         procedure_date = resource.get("performedDateTime")
         if procedure_date is None:
@@ -461,216 +424,6 @@ class PatientDatabaseManager:
             
             """
         )
-        PatientDatabaseManager._create_patients_fts(cursor)
-        PatientDatabaseManager._create_encounters_fts(cursor)
-
-    @staticmethod
-    def _create_patients_fts(cursor):
-        """FTS5 is built into SQLite (not a loadable extension like sqlite-vec)."""
-        cursor.executescript(
-            """
-            DROP TABLE IF EXISTS patients_fts;
-            CREATE VIRTUAL TABLE patients_fts USING fts5(
-                identity_text,
-                patient_id UNINDEXED,
-                first_name UNINDEXED,
-                last_name UNINDEXED,
-                birth_date UNINDEXED,
-                gender UNINDEXED,
-                tokenize='unicode61 remove_diacritics 2'
-            );
-            """
-        )
-
-    @staticmethod
-    def _create_encounters_fts(cursor):
-        cursor.executescript(
-            """
-            DROP TABLE IF EXISTS encounters_fts;
-            CREATE VIRTUAL TABLE encounters_fts USING fts5(
-                identity_text,
-                encounter_id UNINDEXED,
-                patient_id UNINDEXED,
-                encounter_date UNINDEXED,
-                encounter_type UNINDEXED,
-                reason UNINDEXED,
-                tokenize='unicode61 remove_diacritics 2'
-            );
-            """
-        )
-
-    @staticmethod
-    def _patient_identity_text(row) -> str:
-        parts = [
-            row["patient_id"],
-            row["first_name"],
-            row["last_name"],
-            row["birth_date"],
-            row["gender"],
-            # Remove numbers from first and last name
-            re.sub(r'\d+', '', row["first_name"]),
-            re.sub(r'\d+', '', row["last_name"]),
-        ]
-        if row["source_file"]:
-            parts.append(Path(row["source_file"]).stem.replace("_", " "))
-        return " ".join(p for p in parts if p)
-
-    @staticmethod
-    def _encounter_identity_text(row) -> str:
-        parts = [
-            row["encounter_id"],
-            row["patient_id"],
-            row["encounter_date"],
-            row["encounter_type"],
-            row["reason"],
-            row["first_name"],
-            row["last_name"],
-            # Remove numbers from first and last name
-            re.sub(r'\d+', '', row["first_name"]),
-            re.sub(r'\d+', '', row["last_name"]),
-        ]
-        if row["source_file"]:
-            parts.append(Path(row["source_file"]).stem.replace("_", " "))
-        return " ".join(p for p in parts if p)
-
-    @staticmethod
-    def tokenize_query_for_fts(query: str) -> str | None:
-        tokens = re.findall(r"[A-Za-z0-9\-]+", query)
-        tokens = [t for t in tokens if len(t) >= 2]
-        if not tokens:
-            return None
-        return " OR ".join(f'"{t}"' for t in tokens)
-
-    def rebuild_patients_fts(self):
-        self._create_patients_fts(self.cursor)
-        self.cursor.execute(
-            "SELECT patient_id, first_name, last_name, birth_date, gender, source_file FROM patients"
-        )
-        rows = [
-            (
-                self._patient_identity_text(row),
-                row["patient_id"],
-                row["first_name"],
-                row["last_name"],
-                row["birth_date"],
-                row["gender"],
-            )
-            for row in self.cursor.fetchall()
-        ]
-        if rows:
-            self.cursor.executemany(
-                """
-                INSERT INTO patients_fts (
-                    identity_text, patient_id, first_name, last_name, birth_date, gender
-                ) VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                rows,
-            )
-
-    def rebuild_encounters_fts(self):
-        self._create_encounters_fts(self.cursor)
-        self.cursor.execute(
-            """
-            SELECT
-                e.encounter_id,
-                e.patient_id,
-                e.encounter_date,
-                e.encounter_type,
-                e.reason,
-                e.source_file,
-                p.first_name,
-                p.last_name
-            FROM encounters AS e
-            LEFT JOIN patients AS p ON e.patient_id = p.patient_id
-            """
-        )
-        rows = [
-            (
-                self._encounter_identity_text(row),
-                row["encounter_id"],
-                row["patient_id"],
-                row["encounter_date"],
-                row["encounter_type"],
-                row["reason"],
-            )
-            for row in self.cursor.fetchall()
-        ]
-        if rows:
-            self.cursor.executemany(
-                """
-                INSERT INTO encounters_fts (
-                    identity_text,
-                    encounter_id,
-                    patient_id,
-                    encounter_date,
-                    encounter_type,
-                    reason
-                ) VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                rows,
-            )
-    
-    def search_patients_fts(self, query: str, limit: int = 3) -> list[dict[str, Any]]:
-        match_expr = self.tokenize_query_for_fts(query)
-        if not match_expr:
-            return []
-        self.cursor.execute(
-            """
-            SELECT patient_id, first_name, last_name, birth_date, gender, bm25(patients_fts) AS rank
-            FROM patients_fts
-            WHERE patients_fts MATCH ?
-            ORDER BY rank
-            LIMIT ?
-            """,
-            (match_expr, limit),
-        )
-        return [dict(row) for row in self.cursor.fetchall()]
-
-    def search_encounters_fts(
-        self,
-        query: str,
-        limit: int = 3,
-        patient_id: str | None = None,
-    ) -> list[dict[str, Any]]:
-        match_expr = self.tokenize_query_for_fts(query)
-        if not match_expr:
-            return []
-        if patient_id is None:
-            self.cursor.execute(
-                """
-                SELECT
-                    encounter_id,
-                    patient_id,
-                    encounter_date,
-                    encounter_type,
-                    reason,
-                    bm25(encounters_fts) AS rank
-                FROM encounters_fts
-                WHERE encounters_fts MATCH ?
-                ORDER BY rank
-                LIMIT ?
-                """,
-                (match_expr, limit),
-            )
-        else:
-            self.cursor.execute(
-                """
-                SELECT
-                    encounter_id,
-                    patient_id,
-                    encounter_date,
-                    encounter_type,
-                    reason,
-                    bm25(encounters_fts) AS rank
-                FROM encounters_fts
-                WHERE encounters_fts MATCH ?
-                  AND patient_id = ?
-                ORDER BY rank
-                LIMIT ?
-                """,
-                (match_expr, patient_id, limit),
-            )
-        return [dict(row) for row in self.cursor.fetchall()]
 
     @staticmethod
     def _load_patients_data(cursor, patients):
@@ -737,8 +490,6 @@ class PatientDatabaseManager:
         self._load_observations_data(self.cursor, patient_data["observations"])
         self._load_medications_data(self.cursor, patient_data["medications"])
         self._load_procedures_data(self.cursor, patient_data["procedures"])
-        self.rebuild_patients_fts()
-        self.rebuild_encounters_fts()
         self.conn.commit()
 
     def check_loaded_data(self):
@@ -785,7 +536,6 @@ class PatientDatabaseManager:
             self.cursor.execute("""
             SELECT o.*,
             p.first_name,
-            p.last_name,
             p.last_name
             FROM observations as o
             LEFT JOIN patients as p ON o.patient_id = p.patient_id
@@ -806,7 +556,7 @@ class PatientDatabaseManager:
             self.cursor.execute("""
             SELECT m.*,
             p.first_name,
-            p.last_name,
+            p.last_name
             FROM medications as m
             LEFT JOIN patients as p ON m.patient_id = p.patient_id
             WHERE m.medication_id = ?
@@ -859,98 +609,3 @@ class PatientDatabaseManager:
         else:
             self.cursor.execute("SELECT * FROM patients WHERE patient_id = ?", (patient_id,))
         return self.cursor.fetchall()
-
-    def refresh_patient_data(self):
-        self.intialize_database()
-
-    ### Vector Database Functions ###
-
-    def create_vector_tables(self, vector_size: int):
-        """
-        Chunk rows (text + filterable metadata) plus vec0 embeddings.
-        Insert embeddings with rowid = rag_chunks.chunk_id.
-        """
-        self.vector_size = vector_size
-        self.cursor.executescript(
-            """
-            DROP TABLE IF EXISTS rag_chunk_embeddings;
-            DROP TABLE IF EXISTS rag_chunks;
-
-            CREATE TABLE rag_chunks (
-                chunk_id INTEGER PRIMARY KEY,
-                source_id TEXT NOT NULL,
-                resource_type TEXT NOT NULL,
-                patient_id TEXT NOT NULL,
-                encounter_id TEXT,
-                code TEXT,
-                event_date TEXT,
-                source_file TEXT,
-                content TEXT NOT NULL,
-                embedding_model TEXT,
-                metadata_json TEXT,
-                FOREIGN KEY (patient_id) REFERENCES patients(patient_id),
-                UNIQUE (resource_type, source_id)
-            );
-
-            CREATE INDEX idx_rag_chunks_patient_id ON rag_chunks(patient_id);
-            CREATE INDEX idx_rag_chunks_encounter_id ON rag_chunks(encounter_id);
-            CREATE INDEX idx_rag_chunks_resource_type ON rag_chunks(resource_type);
-            CREATE INDEX idx_rag_chunks_source ON rag_chunks(resource_type, source_id);
-
-            CREATE VIRTUAL TABLE rag_chunk_embeddings USING vec0(
-                embedding float[{vector_size}]
-            );
-            """.format(vector_size=vector_size)
-        )
-
-    def add_embeddings(self, chunk_rows, vectors):
-        if len(chunk_rows) != len(vectors):
-            raise ValueError("chunk_rows and vectors must have the same length")
-
-        sql_statement_chunks = """
-            INSERT INTO rag_chunks
-                (chunk_id,
-                source_id,
-                resource_type,
-                patient_id,
-                encounter_id,
-                code,
-                event_date,
-                source_file,
-                content,
-                embedding_model,
-                metadata_json)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT (resource_type, source_id) DO UPDATE SET
-                chunk_id = excluded.chunk_id,
-                patient_id = excluded.patient_id,
-                encounter_id = excluded.encounter_id,
-                code = excluded.code,
-                event_date = excluded.event_date,
-                source_file = excluded.source_file,
-                content = excluded.content,
-                embedding_model = excluded.embedding_model,
-                metadata_json = excluded.metadata_json
-        """
-
-        sql_statement_embeddings = """
-            INSERT OR REPLACE INTO rag_chunk_embeddings
-                (rowid, embedding)
-            VALUES (?, ?)
-        """
-
-        vec_rows = []
-        # Convert the Numpy array to a list of floats for the embedding db
-        for chunk_row, vector in zip(chunk_rows, vectors):
-            chunk_id = chunk_row[0]
-            flat = np.asarray(vector, dtype=np.float32).reshape(-1)
-            blob = sqlite_vec.serialize_float32(flat.tolist())
-            vec_rows.append((chunk_id, blob))
-
-        with self.conn:
-            self.cursor.executemany(sql_statement_chunks, chunk_rows)
-            self.cursor.executemany(sql_statement_embeddings, vec_rows)
-
-dbManager = PatientDatabaseManager()
-
-

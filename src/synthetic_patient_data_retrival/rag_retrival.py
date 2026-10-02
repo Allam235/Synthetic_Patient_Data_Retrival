@@ -15,7 +15,7 @@ print("Finished importing sentence transformer modules")
 from sklearn.metrics.pairwise import cosine_similarity
 
 print("Finished importing sklearn modules")
-from synthetic_patient_data_retrival.loadGeneratorData import PatientDatabaseManager
+from synthetic_patient_data_retrival.DatabaseManager import PatientDatabaseManager
 from synthetic_patient_data_retrival.rag_metadata import (
     document_to_rag_chunk_tuple,
     rows_to_documents,
@@ -284,10 +284,9 @@ dbManager = PatientDatabaseManager()
 embedding_manager = EmbeddingManager()
 rag_retriever = RAGRetriever(dbManager, embedding_manager)
 rag_retriever.add_embeddings(reset=True)
-filters = rag_retriever.retrieve_metadata_filters('When did Zada last visit the hospital?', top_k=5, score_threshold=0.0)
+resultsFTS5 = rag_retriever.retrieve_metadata_filters('When did Zada last visit the hospital?', top_k=5, score_threshold=0.0)
 
-for filter in filters:
-    print(filter)
+
 # print(f"Total documents: {len(all_documents)}")
 
 # for doc in all_documents:
