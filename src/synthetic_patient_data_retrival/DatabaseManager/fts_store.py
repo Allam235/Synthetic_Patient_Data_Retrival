@@ -164,7 +164,13 @@ class FTSStore:
         cursor = self.conn.cursor()
         cursor.execute(
             """
-            SELECT patient_id, first_name, last_name, birth_date, gender, bm25(patients_fts) AS rank
+            SELECT 
+                patient_id, 
+                first_name, 
+                last_name, 
+                birth_date, 
+                gender, 
+                -bm25(patients_fts) AS rank
             FROM patients_fts
             WHERE patients_fts MATCH ?
             ORDER BY rank
@@ -193,7 +199,7 @@ class FTSStore:
                     encounter_date,
                     encounter_type,
                     reason,
-                    bm25(encounters_fts) AS rank
+                    -bm25(encounters_fts) AS rank
                 FROM encounters_fts
                 WHERE encounters_fts MATCH ?
                 ORDER BY rank
@@ -210,7 +216,7 @@ class FTSStore:
                     encounter_date,
                     encounter_type,
                     reason,
-                    bm25(encounters_fts) AS rank
+                    -bm25(encounters_fts) AS rank
                 FROM encounters_fts
                 WHERE encounters_fts MATCH ?
                   AND patient_id = ?

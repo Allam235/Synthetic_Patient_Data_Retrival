@@ -113,6 +113,9 @@ class PatientDatabaseManager:
             query, limit=limit, patient_id=patient_id
         )
 
+    def retrieve_k_nearest_neighbors(self, query_vector: list[float], k: int):
+        return self.vector.retrieve_k_nearest_neighbors(query_vector, k)
+
 
 StorageManager = PatientDatabaseManager
 

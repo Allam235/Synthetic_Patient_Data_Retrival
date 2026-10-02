@@ -2,7 +2,7 @@ import os
 import uuid
 from pathlib import Path
 
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List
 
 import numpy as np
 from langchain_core.documents import Document
@@ -16,31 +16,35 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 print("Finished importing sklearn modules")
 from synthetic_patient_data_retrival.DatabaseManager import PatientDatabaseManager
-from synthetic_patient_data_retrival.rag_metadata import (
-    document_to_rag_chunk_tuple,
-    rows_to_documents,
-)
+from synthetic_patient_data_retrival.rag_metadata import rows_to_embed_batch
 print("Finished importing metadata modules")
-
-### Helper Functions to convert SQLite rows to Langchain Documents
-
-
 
 ### Embeddings and VectorStoreDB
 class EmbeddingManager:
     def __init__(self, model_name: str = "all-MiniLM-L6-v2"):
         """
-        Initialize function for the embedding manager
-        
+        Load a SentenceTransformer model for encoding text.
+
         Args:
-            model_name: HuggingFace model name for sentence embeddings
+            model_name: HuggingFace model name for sentence embeddings.
+
+        Return:
+            None.
         """
         self.model_name = model_name
         self.model = None
         self._load_model()
 
     def _load_model(self):
-        """Load the SentenceTransformer model using the declared HuggingFace model"""
+        """
+        Instantiate self.model from self.model_name.
+
+        Args:
+            None.
+
+        Return:
+            None.
+        """
         try:
             print(f"Loading embedding model: {self.model_name}")
             self.model = SentenceTransformer(self.model_name)
@@ -51,25 +55,39 @@ class EmbeddingManager:
 
     @property
     def embedding_dim(self) -> int:
+        """
+        Embedding width of the loaded model.
+
+        Args:
+            None.
+
+        Return:
+            Vector dimension (e.g. 384).
+        """
         if hasattr(self.model, "get_sentence_embedding_dimension"):
             return self.model.get_sentence_embedding_dimension()
         return self.model.get_embedding_dimension()
 
-    def generate_embeddings(self, texts: List[str]) -> np.ndarray:
+    def generate_embeddings(
+        self, texts: List[str], as_float32_list: bool = True) -> List[List[float]] | np.ndarray:
         """
-        Generate embeddings for a list of texts
-        
+        Encode texts with the loaded SentenceTransformer model.
+
         Args:
-            texts: List of text strings to embed
-            
-        Returns:
-            numpy array of embeddings with shape (len(texts), embedding_dim)
+            texts: Strings to embed.
+            as_float32_list: If True, each vector is a float32 list for sqlite-vec;
+                if False, a single float32 ndarray of shape (len(texts), embedding_dim).
+
+        Return:
+            List of embedding vectors, or a numpy array when as_float32_list is False.
         """
         if not self.model:
             raise ValueError("Embedding model is not loaded.")
         if not texts:
+            if as_float32_list:
+                return []
             return np.empty((0, self.embedding_dim), dtype=np.float32)
-        
+
         try:
             embeddings = self.model.encode(
                 texts,
@@ -79,6 +97,8 @@ class EmbeddingManager:
             embeddings = np.asarray(embeddings, dtype=np.float32)
             if embeddings.ndim == 1:
                 embeddings = embeddings.reshape(1, -1)
+            if as_float32_list:
+                return embeddings.tolist()
             return embeddings
         except Exception as e:
             print(f"Error generating embeddings: {e}")
@@ -86,15 +106,19 @@ class EmbeddingManager:
 
 ### RAG Retriever Pipeline from VectorDB
 class RAGRetriever:
-    """Handles query-based retrieval from the vector store"""
-    
+    """Index clinical rows into vec0 and run FTS / KNN retrieval."""
+
     def __init__(self, dbManager: PatientDatabaseManager, embedding_manager: EmbeddingManager, log_file: str = 'app.log'):
         """
-        Initialize the retriever
-        
+        Wire database access, embeddings, and file logging.
+
         Args:
-            dbManager: Database manager containing document embeddings
-            embedding_manager: Manager for generating query embeddings
+            dbManager: PatientDatabaseManager (SQLite + stores).
+            embedding_manager: Encoder for query and batch embeds.
+            log_file: Path for debug log output.
+
+        Return:
+            None.
         """
         self.dbManager = dbManager
         self.embedding_manager = embedding_manager
@@ -107,159 +131,119 @@ class RAGRetriever:
         file_handler.setFormatter(formatter)
         self.logger.addHandler(file_handler)
 
-    @staticmethod
-    def patients_to_documents(patients):
-        return rows_to_documents(patients, "patient", "patients")
-
-    @staticmethod
-    def encounters_to_documents(encounters):
-        return rows_to_documents(encounters, "encounter", "encounters")
-
-    @staticmethod
-    def conditions_to_documents(conditions):
-        return rows_to_documents(conditions, "condition", "conditions")
-
-    @staticmethod
-    def observations_to_documents(observations):
-        return rows_to_documents(observations, "observation", "observations")
-
-    @staticmethod
-    def medications_to_documents(medications):
-        return rows_to_documents(medications, "medication", "medications")
-
-    @staticmethod
-    def procedures_to_documents(procedures):
-        return rows_to_documents(procedures, "procedure", "procedures")
-
-    def process_all_documents(self) -> List[Document]:
+    def collect_all_embed_batch(self) -> tuple[list[str], list[tuple[Any, ...]]]:
         """
-        Process all documents from the database into a list of langchain documents
-        
-        Returns:
-            List of langchain documents
-        """
-        patient_documents = self.patients_to_documents(self.dbManager.get_patient_data())
-        encounter_documents = self.encounters_to_documents(self.dbManager.get_encounter_data())
-        condition_documents = self.conditions_to_documents(self.dbManager.get_condition_data())
-        observation_documents = self.observations_to_documents(self.dbManager.get_observation_data())
-        medication_documents = self.medications_to_documents(self.dbManager.get_medication_data())
-        procedure_documents = self.procedures_to_documents(self.dbManager.get_procedure_data())
-        return patient_documents + encounter_documents + condition_documents + observation_documents + medication_documents + procedure_documents
+        Build embed texts and rag_chunks tuples for every clinical table.
 
-
-    def retrieve(self, query: str, top_k: int = 5, score_threshold: float = 0.0) -> List[Dict[str, Any]]:
-        """
-        Retrieve relevant documents for a query
-        
         Args:
-            query: The search query
-            top_k: Number of top results to return
-            score_threshold: Minimum similarity score threshold
-            
-        Returns:
-            List of dictionaries containing retrieved documents and metadata
+            None.
+
+        Return:
+            Parallel lists of embed strings and (chunk_id, source_id, resource_type) rows.
         """
-        print(f"Retrieving documents for query: '{query}'")
-        print(f"Top K: {top_k}, Score threshold: {score_threshold}")
-        
-        # Generate query embedding
-        query_embedding = self.embedding_manager.generate_embeddings([query])[0]
-        
-        # Search in vector store
-        try:
-            results = self.vector_store.collection.query(
-                query_embeddings=[query_embedding.tolist()],
-                n_results=top_k
-            )
-
-            #Process the resulting queried embeddings
-            retrieved_docs = []
-
-            if results['documents'] and results['documents'][0]:
-                documents = results['documents'][0]
-                metadatas = results['metadatas'][0]
-                distances = results['distances'][0]
-                ids = results['ids'][0]
-                
-                for i, (doc_id, document, metadata, distance) in enumerate(zip(ids, documents, metadatas, distances)):
-                    # Convert distance to similarity score (ChromaDB uses cosine distance)
-                    similarity_score = 1 - distance
-                    
-                    if similarity_score >= score_threshold:
-                        retrieved_docs.append({
-                            'id': doc_id,
-                            'content': document,
-                            'metadata': metadata,
-                            'similarity_score': similarity_score,
-                            'distance': distance,
-                            'rank': i + 1
-                        })
-                
-                print(f"Retrieved {len(retrieved_docs)} documents (after filtering)")
-            else:
-                print("No documents found")
-            
-            return retrieved_docs
-            
-        except Exception as e:
-            print(f"Error during retrieval: {e}")
-            return []
+        texts: list[str] = []
+        chunk_rows: list[tuple[Any, ...]] = []
+        sources = [
+            (self.dbManager.get_patient_data(), "patient", "patients"),
+            (self.dbManager.get_encounter_data(), "encounter", "encounters"),
+            (self.dbManager.get_condition_data(), "condition", "conditions"),
+            (self.dbManager.get_observation_data(), "observation", "observations"),
+            (self.dbManager.get_medication_data(), "medication", "medications"),
+            (self.dbManager.get_procedure_data(), "procedure", "procedures"),
+        ]
+        for rows, resource_type, label in sources:
+            batch_texts, batch_rows = rows_to_embed_batch(rows, resource_type, label)
+            texts.extend(batch_texts)
+            chunk_rows.extend(batch_rows)
+        return texts, chunk_rows
 
     def add_documents(self, files: List[str]):
         """
-        Add FHIR JSON files to the database
-        
+        Load Synthea FHIR bundles into the relational store.
+
         Args:
-            files: List of file paths to add
+            files: FHIR JSON file paths to ingest.
+
+        Return:
+            None.
         """
         self.dbManager.load_patient_data(files=files, patient_data=None, patientsCount=None)
 
-    def add_embeddings(self, documents: List[Document] = None, reset: bool = False):
+    def rebuild_embeddings_fts_tables(self):
         """
-        Add embeddings to the database(embeds incoming documents if provided)
-        
-        Args:
-            documents: List of langchain documents to add
-            reset: Whether to reembed all the existing embeddings(embeds incoming vectors if provided)
-        """
-        batch: List[Document] = []
-        if documents:
-            batch.extend(documents)
-        if reset:
-            self.dbManager.create_vector_tables(
-                vector_size=self.embedding_manager.embedding_dim,
-            )
-            self.dbManager.conn.commit()
-            batch.extend(self.process_all_documents())
-        if not batch:
-            raise ValueError("add_embeddings requires documents and/or reset=True")
+        Recreate vector tables, embed all rows, and rebuild identity FTS.
 
-        texts = [doc.page_content for doc in batch]
+        Args:
+            reset: Must be True; drops rag_chunks / vec0 and re-indexes everything.
+
+        Return:
+            None.
+        """
+
+        self.dbManager.create_vector_tables(vector_size=self.embedding_manager.embedding_dim)
+        self.dbManager.conn.commit()
+        texts, chunk_rows = self.collect_all_embed_batch()
+        if not texts:
+            raise ValueError("No rows to embed")
+
         vectors = self.embedding_manager.generate_embeddings(texts)
-        chunk_rows = [
-            document_to_rag_chunk_tuple(doc, self.embedding_manager.model_name)
-            for doc in batch
-        ]
         self.dbManager.add_embeddings(chunk_rows, vectors)
         self.dbManager.rebuild_patients_fts()
         self.dbManager.rebuild_encounters_fts()
         self.dbManager.conn.commit()
 
-    def retrieve_metadata_filters(self, query: str, top_k: int = 5, score_threshold: float = 0.0) -> List[Dict[str, Any]]:
+
+    def retrieve_documents_by_knn(self, query: str = None, query_embedding: list[float] = None, top_k: int = 5, score_threshold: float = 0.0) -> List[Dict[str, Any]]:
         """
-        Retrieve relevant documents for a query with metadata filters
-        
+        Retrieve chunk hits by sqlite-vec KNN on the query embedding.
+
         Args:
-            query: The search query
-            top_k: Number of top results to return
+            query: Natural-language query; encoded when query_embedding is omitted.
+            query_embedding: Precomputed query vector (float32 list).
+            top_k: Maximum neighbors to return.
             score_threshold: Minimum similarity score threshold
+
+        Return:
+            Hydrated records from get_document per chunk_id (empty list on error).
+        """
+        if not query and not query_embedding:
+            raise ValueError("Either query or query_embedding must be provided")
+            
+        print(f"Retrieving documents for query: '{query}'")
+        print(f"Top K: {top_k}, Score threshold: {score_threshold}")
+        
+        documents = [] # List of Langchain Documents with content and metadata
+        # Generate query embedding
+        if not query_embedding:
+            query_embedding = self.embedding_manager.generate_embeddings([query])[0]
+        try:
+            chunk_ids = self.dbManager.retrieve_k_nearest_neighbors(query_embedding, top_k)
+            self.logger.info(f"Chunk IDs: {chunk_ids}")
+            for chunk_id in chunk_ids:
+                document = self.dbManager.get_document(chunk_id)
+                documents.append(document)
+                self.logger.info(f"Document: {document}")
+            return documents
+        except Exception as e:
+            self.logger.error(f"Error during retrieval: {e}")
+            return []
+
+
+    def retrieve_documents_by_fts(self, query: str, top_k: int = 5, score_threshold: float = 0.0) -> List[Dict[str, Any]]:
+        """
+        Shortlist patients and encounters with BM25 identity FTS.
+
+        Args:
+            query: Natural-language query.
+            top_k: Max hits per patients_fts and encounters_fts.
+            score_threshold: Minimum similarity score threshold
+
+        Return:
+            Combined list of patient and encounter FTS hit dicts.
         """
         print(f"Retrieving documents for query: '{query}'")
         print(f"Top K: {top_k}, Score threshold: {score_threshold}")
 
-        # Generate query embedding
-        query_embedding = self.embedding_manager.generate_embeddings([query])[0]
-        
         # Search in vector store
         try:
             results = self.dbManager.search_patients_fts(query, top_k)
@@ -276,6 +260,27 @@ class RAGRetriever:
             self.logger.error(f"Error during retrieval: {e}")
             return []
 
+    def retrieve_documents_hybrid(self, query: str, top_k: int = 5, score_threshold: float = 0.0) -> List[Dict[str, Any]]:
+        """
+        Retrieve relevant documents for a query using a hybrid approach of KNN and FTS
+        
+        Args:
+            query: Natural-language query.
+            top_k: Passed through to KNN and FTS helpers.
+            score_threshold: Minimum similarity score threshold
+
+        Return:
+            Combined list of KNN and FTS hit dicts.
+        """
+        # Generate query embedding
+        query_embedding = self.embedding_manager.generate_embeddings([query])[0]
+
+        # Retrieve documents using KNN
+        self.logger.info(f"KNN documents: ")
+        knn_documents = self.retrieve_documents_by_knn(query_embedding=query_embedding, top_k=top_k, score_threshold=score_threshold)
+        # Retrieve documents using FTS
+        self.logger.info(f"FTS documents: ")
+        fts_documents = self.retrieve_documents_by_fts(query=query, top_k=top_k, score_threshold=score_threshold)
 
 
 
@@ -283,9 +288,8 @@ class RAGRetriever:
 dbManager = PatientDatabaseManager()
 embedding_manager = EmbeddingManager()
 rag_retriever = RAGRetriever(dbManager, embedding_manager)
-rag_retriever.add_embeddings(reset=True)
-resultsFTS5 = rag_retriever.retrieve_metadata_filters('When did Zada last visit the hospital?', top_k=5, score_threshold=0.0)
-
+rag_retriever.rebuild_embeddings_fts_tables(reset=True)
+resultsFTS5 = rag_retriever.retrieve_documents_by_fts('When did Zada last visit the hospital?', top_k=5, score_threshold=0.0)
 
 # print(f"Total documents: {len(all_documents)}")
 
